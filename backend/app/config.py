@@ -16,7 +16,12 @@ class Settings(BaseSettings):
     http_timeout_seconds: float = 300
     # Agent (Gemini). Without a key, POST /api/chat answers 503 and the rest of the API works.
     gemini_api_key: SecretStr | None = None
-    gemini_model: str = "gemini-flash-latest"
+    # Model names verified against the models available to a new AI Studio key (2026-11-22).
+    # Flash-Lite first: it answers in ~1 s, while gemini-3.8-flash was saturated (503/504) in tests.
+    gemini_model: str = "gemini-3.5-flash-lite"
+    # Tried in order when the current model is overloaded, rate-limited or times out.
+    gemini_fallback_models: list[str] = ["gemini-3.1-flash-lite", "gemini-3.8-flash"]
+    gemini_timeout_seconds: float = 30
     gemini_temperature: float = 0.2
     # Separate DuckDB file so the API never needs write access to the analytics database.
     gap_log_path: Path = Path("data/gap_log.duckdb")

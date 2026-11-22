@@ -64,6 +64,8 @@ def build_ask_question(settings: Settings, store: DuckDBStore) -> AskQuestion | 
     llm = GeminiLLM(
         api_key=settings.gemini_api_key.get_secret_value(),
         model=settings.gemini_model,
+        fallback_models=settings.gemini_fallback_models,
+        timeout_seconds=settings.gemini_timeout_seconds,
         system_instruction=SYSTEM_PROMPT,
         temperature=settings.gemini_temperature,
     )
@@ -120,7 +122,15 @@ def create_app(
         try:
             result = agent.run(body.question)
         except Exception as error:  # network/quota errors of the LLM provider
-            logger.error("Chat failed: %s", type(error).__name__)
+            # Provider errors carry an HTTP code and status (e.g. 429 RESOURCE_EXHAUSTED);
+            # they never include the API key, and the question is not logged.
+            logger.error(
+                "Chat failed: %s code=%s status=%s message=%s",
+                type(error).__name__,
+                getattr(error, "code", None),
+                getattr(error, "status", None),
+                str(getattr(error, "message", "") or "")[:300],
+            )
             raise HTTPException(status_code=502, detail=LLM_FAILURE_MESSAGE) from error
         return _to_response(result)
 

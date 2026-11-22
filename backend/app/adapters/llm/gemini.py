@@ -5,15 +5,49 @@ its own: the use case executes every call deterministically and sends the result
 """
 
 import json
+import logging
 from typing import Any, Literal
 
 from google import genai
-from google.genai import types
+from google.genai import errors, types
 from pydantic import BaseModel, Field, ValidationError
 
 from app.application.prompts import COMPOSE_INSTRUCTIONS, wrap_question
 from app.domain import DraftAnswer, ToolCall, ToolOutcome, ToolSpec
 from app.ports import LLMOutputError
+
+logger = logging.getLogger(__name__)
+
+# Provider-side conditions where trying another model makes sense.
+RETRYABLE_CODES = {429, 503, 504}
+
+
+class ModelSelector:
+    """Calls Gemini with the current model and moves to the next one when it is overloaded.
+
+    The choice is sticky for the whole question: once a planning conversation moved to a fallback
+    model it stays there, because thought signatures belong to the model that produced them.
+    """
+
+    def __init__(self, client: Any, models: list[str]) -> None:
+        self._client = client
+        self._models = models
+        self._index = 0
+
+    def generate(self, contents: Any, config: types.GenerateContentConfig) -> Any:
+        while True:
+            model = self._models[self._index]
+            try:
+                return self._client.models.generate_content(
+                    model=model, contents=contents, config=config
+                )
+            except errors.APIError as error:
+                is_last = self._index == len(self._models) - 1
+                if error.code not in RETRYABLE_CODES or is_last:
+                    raise
+                logger.warning("Gemini model %s unavailable (code=%s); falling back to %s",
+                               model, error.code, self._models[self._index + 1])
+                self._index += 1
 
 
 class FinalAnswerSchema(BaseModel):
@@ -33,10 +67,16 @@ class GeminiLLM:
         model: str,
         system_instruction: str,
         temperature: float = 0.2,
+        fallback_models: list[str] | None = None,
+        timeout_seconds: float = 30,
         client: Any | None = None,
     ) -> None:
-        self._client = client or genai.Client(api_key=api_key)
-        self._model = model
+        # Without a timeout an overloaded model can hold the request for minutes.
+        self._client = client or genai.Client(
+            api_key=api_key,
+            http_options=types.HttpOptions(timeout=int(timeout_seconds * 1000)),
+        )
+        self._models = [model, *(fallback_models or [])]
         self._system_instruction = system_instruction
         self._temperature = temperature
 
@@ -55,7 +95,7 @@ class GeminiLLM:
             temperature=self._temperature,
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
-        return GeminiPlanningSession(self._client, self._model, config, question)
+        return GeminiPlanningSession(ModelSelector(self._client, self._models), config, question)
 
     def compose_answer(self, question: str, results: list[ToolOutcome]) -> DraftAnswer:
         tool_results = [
@@ -73,9 +113,7 @@ class GeminiLLM:
             response_mime_type="application/json",
             response_json_schema=FinalAnswerSchema.model_json_schema(),
         )
-        response = self._client.models.generate_content(
-            model=self._model, contents=prompt, config=config
-        )
+        response = ModelSelector(self._client, self._models).generate(prompt, config)
         try:
             parsed = FinalAnswerSchema.model_validate_json(response.text or "")
         except ValidationError as error:
@@ -92,10 +130,9 @@ class GeminiLLM:
 class GeminiPlanningSession:
     """Keeps the raw conversation so model turns (and their thought signatures) are preserved."""
 
-    def __init__(self, client: Any, model: str, config: types.GenerateContentConfig,
+    def __init__(self, selector: ModelSelector, config: types.GenerateContentConfig,
                  question: str) -> None:
-        self._client = client
-        self._model = model
+        self._selector = selector
         self._config = config
         self._contents: list[types.Content] = [
             types.Content(role="user", parts=[types.Part.from_text(text=wrap_question(question))])
@@ -113,9 +150,7 @@ class GeminiPlanningSession:
                 parts.append(part)
             self._contents.append(types.Content(role="user", parts=parts))
 
-        response = self._client.models.generate_content(
-            model=self._model, contents=self._contents, config=self._config
-        )
+        response = self._selector.generate(self._contents, self._config)
         calls = response.function_calls or []
         if calls:
             # Append the model turn as-is: it carries the thought signatures Gemini requires.

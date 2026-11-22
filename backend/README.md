@@ -68,7 +68,9 @@ La configuración se lee de variables de entorno o de un archivo `.env` en `back
 | `DATA_DIR` | `data` | Carpeta de datos; los archivos descargados se guardan en `data/raw` |
 | `DUCKDB_PATH` | `data/san_cristobal.duckdb` | Base de datos con las tablas limpias |
 | `GEMINI_API_KEY` | (vacía) | Clave de Gemini. Sin ella `POST /api/chat` responde 503; el resto de la API funciona |
-| `GEMINI_MODEL` | `gemini-flash-latest` | Modelo de Gemini usado por el chat |
+| `GEMINI_MODEL` | `gemini-3.5-flash-lite` | Modelo principal de Gemini usado por el chat |
+| `GEMINI_FALLBACK_MODELS` | `["gemini-3.1-flash-lite", "gemini-3.8-flash"]` | Modelos de respaldo (formato JSON) cuando el actual está saturado (503), limitado (429) o no responde a tiempo (504) |
+| `GEMINI_TIMEOUT_SECONDS` | `30` | Tiempo máximo por llamada a Gemini |
 | `GEMINI_TEMPERATURE` | `0.2` | Temperatura del modelo (baja: respuestas estables) |
 | `GAP_LOG_PATH` | `data/gap_log.duckdb` | Base DuckDB con la tabla `gap_log` (vacíos de información) |
 | `CHAT_RATE_LIMIT_PER_MINUTE` | `20` | Preguntas por minuto permitidas por cliente (en memoria) |
@@ -78,8 +80,9 @@ Ejemplo de `.env`:
 
 ```bash
 GEMINI_API_KEY=tu-clave
-GEMINI_MODEL=gemini-flash-latest
 ```
+
+Las claves nuevas de AI Studio no tienen acceso a modelos antiguos como `gemini-2.5-flash` (responden 404). Para ver qué modelos tiene disponible tu clave, usa `client.models.list()` del SDK `google-genai`.
 
 La clave solo vive en el backend; nunca se envía al frontend.
 
