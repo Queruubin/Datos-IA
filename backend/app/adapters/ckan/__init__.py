@@ -6,8 +6,30 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 logger = logging.getLogger(__name__)
+
+# The portal sometimes drops connections mid-download ("Remote end closed connection"); without
+# retries a single dropped file silently left a month missing from the database.
+DOWNLOAD_RETRIES = Retry(
+    total=4,
+    connect=4,
+    read=4,
+    status=4,
+    backoff_factor=1,  # waits 0 s, 2 s, 4 s, 8 s between attempts
+    status_forcelist=(429, 500, 502, 503, 504),
+    allowed_methods=frozenset({"GET"}),
+)
+
+
+def build_session() -> requests.Session:
+    session = requests.Session()
+    adapter = HTTPAdapter(max_retries=DOWNLOAD_RETRIES)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
 
 
 class CkanError(RuntimeError):
@@ -32,7 +54,7 @@ class CkanClient:
         self._cache_dir = cache_dir
         # (connect timeout, read timeout)
         self._timeout = (10, timeout_seconds)
-        self._session = session or requests.Session()
+        self._session = session or build_session()
 
     def get_dataset(self, dataset_id: str) -> dict:
         response = self._session.get(
