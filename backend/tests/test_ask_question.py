@@ -16,9 +16,10 @@ CONTRAST_CALL = ToolCall(
 )
 
 
-@pytest.fixture
-def tools(tmp_path):
-    return AgentTools(build_fixture_db(tmp_path / "agent.duckdb"))
+@pytest.fixture(scope="module")
+def tools(tmp_path_factory):
+    # Tools only read: one fixture database for the whole module.
+    return AgentTools(build_fixture_db(tmp_path_factory.mktemp("ask") / "agent.duckdb"))
 
 
 def ask(tools, llm, gaps=None, question="¿Cuánto se ejecutó en 2025?", **kwargs):
@@ -112,6 +113,30 @@ def test_comparison_is_attached_with_code_computed_verdict(tools):
 
     assert result.comparison["verdict"] == "difference_detected"
     assert result.comparison["evidence_ids"] == ["E1", "E2"]
+
+
+def test_poai_vs_pmr_comparison_is_attached(tools):
+    llm = ScriptedLLM(
+        [[ToolCall("compare_poai_vs_pmr", {"year": 2026})]],
+        DraftAnswer("Una meta tiene magnitud distinta (E2).", ["E2"], "answered"),
+    )
+
+    result, _ = ask(tools, llm)
+
+    assert result.comparison["verdict"] == "difference_detected"
+    assert result.comparison["magnitude_differences"] == 1
+    assert [e.source_id for e in result.evidence] == ["PMR"]
+
+
+def test_tool_answer_without_verdict_is_not_a_comparison(tools):
+    llm = ScriptedLLM(
+        [[ToolCall("compare_poai_vs_pmr", {"year": 2030})]],
+        DraftAnswer("No hay datos de 2030.", [], "answered"),
+    )
+
+    result, _ = ask(tools, llm)
+
+    assert result.comparison is None
 
 
 def test_loop_stops_at_max_rounds(tools):

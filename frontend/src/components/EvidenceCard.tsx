@@ -30,6 +30,11 @@ export function EvidenceCard({ evidence, anchorId }: EvidenceCardProps) {
       <p className="mt-2 text-xs break-words text-slate-600">
         <span className="font-medium">Ubicación del dato:</span> {evidence.locator}
       </p>
+      {!isSafeUrl(evidence.portal_url) && evidence.origin_note && (
+        <p className="mt-1 text-xs break-words text-slate-600">
+          <span className="font-medium">Origen:</span> {evidence.origin_note}
+        </p>
+      )}
       {isSafeUrl(evidence.portal_url) && (
         <a
           href={evidence.portal_url}

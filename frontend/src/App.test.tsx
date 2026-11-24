@@ -155,6 +155,30 @@ describe('Sources page', () => {
     expect(screen.getByRole('link', { name: 'Fuentes' })).toHaveAttribute('aria-current', 'page')
   })
 
+  it('shows the origin of curated sources that are not on the open-data portal', async () => {
+    mockFetch().mockResolvedValue(
+      jsonResponse([
+        source({
+          source_id: 'POAI',
+          table_name: 'poai',
+          title: 'POAI San Cristóbal 2025–2026',
+          portal_url: null,
+          unit: 'COP (pesos colombianos)',
+          data_cutoff: null,
+          origin_note: 'Archivo POAI entregado por la Alcaldía Local, consolidado por el equipo.',
+        }),
+      ]),
+    )
+    window.location.hash = '#/fuentes'
+    render(<App />)
+
+    expect(await screen.findByRole('heading', { name: 'POAI San Cristóbal 2025–2026' })).toBeInTheDocument()
+    expect(screen.getByText(/Archivo POAI entregado por la Alcaldía Local/)).toBeInTheDocument()
+    expect(screen.getByText('No publicada en el portal de Datos Abiertos.')).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Ver en Datos Abiertos/ })).not.toBeInTheDocument()
+    expect(screen.getByText('COP (pesos colombianos)')).toBeInTheDocument()
+  })
+
   it('shows an error with retry when the backend is down', async () => {
     const fetchMock = mockFetch()
     fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch')).mockResolvedValueOnce(jsonResponse([source()]))

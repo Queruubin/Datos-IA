@@ -1,7 +1,7 @@
 import { FALLBACK_DISCLAIMER } from '../lib/disclaimer'
 import { InfoIcon } from './icons'
 
-export type Page = 'chat' | 'sources'
+export type Page = 'chat' | 'sources' | 'usage'
 
 interface HeaderProps {
   page: Page
@@ -11,6 +11,7 @@ interface HeaderProps {
 const LINKS: { page: Page; href: string; label: string }[] = [
   { page: 'chat', href: '#/', label: 'Chat' },
   { page: 'sources', href: '#/fuentes', label: 'Fuentes' },
+  { page: 'usage', href: '#/consumo', label: 'Consumo' },
 ]
 
 export function Header({ page, disclaimer }: HeaderProps) {

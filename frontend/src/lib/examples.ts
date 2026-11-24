@@ -5,4 +5,6 @@ export const EXAMPLE_QUESTIONS = [
   '¿Las propuestas priorizadas tienen contratos?',
   '¿Cómo van las propuestas de cultura en 2025?',
   '¿Cuánto tardan en responder las peticiones ciudadanas?',
+  '¿Cuánto se planeó invertir en 2026 y cuánto se ha comprometido?',
+  '¿Coincide lo planeado en el POAI con el seguimiento de metas?',
 ]

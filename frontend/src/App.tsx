@@ -3,9 +3,18 @@ import { Header, type Page } from './components/Header'
 import { useChat } from './hooks/useChat'
 import { ChatPage } from './pages/ChatPage'
 import { SourcesPage } from './pages/SourcesPage'
+import { UsagePage } from './pages/UsagePage'
 
 function pageFromHash(hash: string): Page {
-  return hash.startsWith('#/fuentes') ? 'sources' : 'chat'
+  if (hash.startsWith('#/fuentes')) return 'sources'
+  if (hash.startsWith('#/consumo')) return 'usage'
+  return 'chat'
+}
+
+const TITLES: Record<Page, string> = {
+  chat: 'Verificador de información pública · San Cristóbal',
+  sources: 'Fuentes · Verificador de información pública · San Cristóbal',
+  usage: 'Consumo · Verificador de información pública · San Cristóbal',
 }
 
 export default function App() {
@@ -20,10 +29,7 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    document.title =
-      page === 'sources'
-        ? 'Fuentes · Verificador de información pública · San Cristóbal'
-        : 'Verificador de información pública · San Cristóbal'
+    document.title = TITLES[page]
   }, [page])
 
   return (
@@ -40,7 +46,9 @@ export default function App() {
       </a>
       <Header page={page} disclaimer={chat.disclaimer} />
       <main id="main" tabIndex={-1} className="mx-auto max-w-3xl px-4 pt-4 focus:outline-none">
-        {page === 'chat' ? <ChatPage chat={chat} /> : <SourcesPage />}
+        {page === 'chat' && <ChatPage chat={chat} />}
+        {page === 'sources' && <SourcesPage />}
+        {page === 'usage' && <UsagePage />}
       </main>
     </div>
   )

@@ -210,6 +210,6 @@ Lo ideal es validar además con 5–10 personas reales de San Cristóbal (objeti
 
 ## 12. Preguntas abiertas
 1. ~~¿F3 trae columna de localidad?~~ Sí (resuelto en la fase 0). Nueva: ¿en qué unidad están los valores de F1 (¿millones de pesos?), y hay datos de PAC posteriores a junio de 2025?
-2. ¿Hay URL estable del POAI vigente de San Cristóbal, y de qué vigencia (2025/2026)?
+2. ~~¿Hay URL estable del POAI vigente de San Cristóbal, y de qué vigencia (2025/2026)?~~ Resuelto (2026-11-23): no hay URL en el portal, pero el equipo obtuvo el POAI 2025 y 2026 de la Alcaldía Local y lo integró, con el PMR, los ODS, los presupuestos participativos, los CRP y las PQRS, en `curated_data/`. Nueva: ¿cuál archivo de avance de presupuestos participativos es el vigente? El corte curado de 01-10-2026 y el del portal de 30-09-2026 tienen estados distintos (ver `HALLAZGOS_DATOS.md`, C.6).
 3. ¿Cuál es el plazo de entrega y la fecha de la demo?
 4. ¿Se puede conseguir un contacto en la Alcaldía Local para validar el panel?

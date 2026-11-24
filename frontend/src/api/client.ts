@@ -1,4 +1,4 @@
-import type { ChatResponse, SourceMetadata } from './types'
+import type { ChatResponse, SourceMetadata, UsageReport } from './types'
 
 export const API_BASE_URL: string = (
   import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
@@ -64,4 +64,8 @@ export function postChat(question: string): Promise<ChatResponse> {
 
 export function getSources(): Promise<SourceMetadata[]> {
   return request<SourceMetadata[]>('/api/sources')
+}
+
+export function getUsage(): Promise<UsageReport> {
+  return request<UsageReport>('/api/usage')
 }

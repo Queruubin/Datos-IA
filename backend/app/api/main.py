@@ -1,6 +1,7 @@
 """FastAPI application. Run with: uvicorn app.api.main:app --reload"""
 
 import logging
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Request
@@ -9,12 +10,15 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.adapters.duckdb import DuckDBStore
 from app.adapters.duckdb.gap_repository import DuckDBGapRepository
+from app.adapters.duckdb.usage_repository import DuckDBUsageRepository
+from app.adapters.exchange_rate import TrmClient
 from app.api.rate_limit import RateLimiter
 from app.application import AgentTools, AskQuestion
 from app.application.prompts import DISCLAIMER, SYSTEM_PROMPT
+from app.application.usage_report import UsageReport, build_usage_report
 from app.config import Settings, get_settings
-from app.domain import ChatAnswer, SourceMetadata
-from app.ports import DataStorePort
+from app.domain import ChatAnswer, ExchangeRate, QuestionUsage, SourceMetadata
+from app.ports import DataStorePort, ExchangeRatePort, UsageRepositoryPort
 
 logger = logging.getLogger(__name__)
 
@@ -36,14 +40,29 @@ class EvidenceOut(BaseModel):
     source_id: str
     title: str
     data_cutoff: str | None
-    portal_url: str
+    portal_url: str | None  # None when the source is not on the open-data portal
     locator: str
     summary: str
+    origin_note: str | None = None
 
 
 class GapOut(BaseModel):
     topic: str
     missing_data: str
+
+
+class UsageOut(BaseModel):
+    """Tokens and paid-tier equivalent cost of one question (all its Gemini calls)."""
+
+    input_tokens: int
+    output_tokens: int  # visible answer tokens
+    thinking_tokens: int  # reasoning tokens (billed as output)
+    total_tokens: int
+    calls: int
+    models: list[str]
+    cost_usd: float | None  # None if a model has no known price
+    cost_cop: float | None  # None if cost_usd is None or no USD→COP rate is available
+    unpriced_models: list[str] = []
 
 
 class ChatResponse(BaseModel):
@@ -53,9 +72,12 @@ class ChatResponse(BaseModel):
     comparison: dict[str, Any] | None = None
     gap: GapOut | None = None
     disclaimer: str = DISCLAIMER
+    usage: UsageOut | None = None
 
 
-def build_ask_question(settings: Settings, store: DuckDBStore) -> AskQuestion | None:
+def build_ask_question(
+    settings: Settings, store: DuckDBStore, usage: UsageRepositoryPort | None = None
+) -> AskQuestion | None:
     """Wire the real agent, or None when no Gemini key is configured."""
     if settings.gemini_api_key is None or not settings.gemini_api_key.get_secret_value():
         return None
@@ -69,7 +91,9 @@ def build_ask_question(settings: Settings, store: DuckDBStore) -> AskQuestion | 
         system_instruction=SYSTEM_PROMPT,
         temperature=settings.gemini_temperature,
     )
-    return AskQuestion(llm, AgentTools(store), DuckDBGapRepository(settings.gap_log_path))
+    return AskQuestion(
+        llm, AgentTools(store), DuckDBGapRepository(settings.gap_log_path), usage=usage
+    )
 
 
 def create_app(
@@ -77,6 +101,8 @@ def create_app(
     ask_question: AskQuestion | None = None,
     settings: Settings | None = None,
     rate_limiter: RateLimiter | None = None,
+    usage_repository: UsageRepositoryPort | None = None,
+    exchange_rate: ExchangeRatePort | None = None,
 ) -> FastAPI:
     """Build the app. Tests pass fakes; by default everything is wired from settings.
 
@@ -85,8 +111,14 @@ def create_app(
     settings = settings or get_settings()
     duckdb_store = DuckDBStore(settings.duckdb_path)
     data_store = store or duckdb_store
+    usage_log = usage_repository or DuckDBUsageRepository(settings.usage_log_path)
+    rates = exchange_rate or TrmClient(
+        url=settings.trm_api_url,
+        timeout_seconds=settings.trm_timeout_seconds,
+        fallback=settings.usd_to_cop_fallback,
+    )
     agent = ask_question if ask_question is not None else build_ask_question(
-        settings, duckdb_store
+        settings, duckdb_store, usage_log
     )
     limiter = rate_limiter or RateLimiter(settings.chat_rate_limit_per_minute)
 
@@ -132,12 +164,21 @@ def create_app(
                 str(getattr(error, "message", "") or "")[:300],
             )
             raise HTTPException(status_code=502, detail=LLM_FAILURE_MESSAGE) from error
-        return _to_response(result)
+        rate = rates.usd_to_cop() if result.usage is not None else None
+        return _to_response(result, rate)
+
+    @app.get("/api/usage", response_model=UsageReport)
+    def usage() -> UsageReport:
+        """Token usage and its paid-tier equivalent cost (USD and COP). On Gemini's free tier
+        the real charge is 0."""
+        return build_usage_report(
+            usage_log.list_records(), datetime.now(UTC), rates.usd_to_cop()
+        )
 
     return app
 
 
-def _to_response(result: ChatAnswer) -> ChatResponse:
+def _to_response(result: ChatAnswer, rate: ExchangeRate | None = None) -> ChatResponse:
     return ChatResponse(
         answer=result.answer,
         status=result.status,
@@ -145,6 +186,26 @@ def _to_response(result: ChatAnswer) -> ChatResponse:
         comparison=result.comparison,
         gap=GapOut(**vars(result.gap)) if result.gap else None,
         disclaimer=DISCLAIMER,
+        usage=_usage_out(result.usage, rate) if result.usage else None,
+    )
+
+
+def _usage_out(usage: QuestionUsage, rate: ExchangeRate | None) -> UsageOut:
+    cost_cop = (
+        usage.cost_usd * rate.value
+        if usage.cost_usd is not None and rate is not None and rate.value is not None
+        else None
+    )
+    return UsageOut(
+        input_tokens=usage.input_tokens,
+        output_tokens=usage.output_tokens,
+        thinking_tokens=usage.thinking_tokens,
+        total_tokens=usage.total_tokens,
+        calls=len(usage.calls),
+        models=usage.models,
+        cost_usd=usage.cost_usd,
+        cost_cop=cost_cop,
+        unpriced_models=list(usage.unpriced_models),
     )
 
 

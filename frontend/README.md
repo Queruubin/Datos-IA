@@ -1,6 +1,6 @@
 # Frontend · Verificador de información pública · San Cristóbal
 
-Interfaz web del agente de verificación: un chat donde cualquier persona pregunta por la gestión de la Alcaldía Local de San Cristóbal y recibe respuestas con evidencia de datos oficiales, y una página de **Fuentes** con la fecha de corte de cada conjunto de datos.
+Interfaz web del agente de verificación: un chat donde cualquier persona pregunta por la gestión de la Alcaldía Local de San Cristóbal y recibe respuestas con evidencia de datos oficiales, una página de **Fuentes** con la fecha de corte de cada conjunto de datos y una página de **Consumo** con los tokens usados y su costo equivalente.
 
 Tecnología: Vite + React + TypeScript + Tailwind CSS v4. Pruebas con Vitest y Testing Library.
 
@@ -52,11 +52,17 @@ O defínela al ejecutar el comando, por ejemplo `VITE_API_URL=https://mi-backend
 ```
 src/
   api/          cliente HTTP tipado (tiempo límite de 60 s) y mensajes de error
-  hooks/        useChat y useSources: estado y llamadas a la API
+  hooks/        useChat, useSources y useUsage: estado y llamadas a la API
   components/   componentes de presentación (MessageBubble, EvidenceCard, VerdictBadge,
-                GapCard, ExampleQuestions, ChatInput, SourcesTable, ...)
-  pages/        ChatPage y SourcesPage
-  lib/          formato de fechas, ejemplos, validación de enlaces
+                GapCard, ExampleQuestions, ChatInput, SourcesTable, UsageReportView, ...)
+  pages/        ChatPage, SourcesPage y UsagePage
+  lib/          formato de fechas, números y costos (es-CO), ejemplos, validación de enlaces
 ```
 
-La navegación usa el hash de la URL: `#/` para el chat y `#/fuentes` para las fuentes.
+La navegación usa el hash de la URL: `#/` para el chat, `#/fuentes` para las fuentes y `#/consumo` para el consumo.
+
+## Consumo
+
+- Debajo de cada respuesta aparece una línea discreta con los tokens y el costo, por ejemplo `≈ 3.240 tokens · USD 0,0021 · COP 8`. Los costos muy pequeños se muestran con suficientes decimales para no aparecer como 0; si un costo no se conoce, no se muestra.
+- La página **Consumo** (`GET /api/usage`) muestra preguntas, tokens, costo equivalente en USD y COP, costo promedio por pregunta, el desglose por modelo y por día, la TRM usada (valor, fecha y fuente) y la tabla de precios con su enlace oficial.
+- Con el plan gratuito de Gemini el costo real es $0; las cifras son el equivalente en el plan pagado.

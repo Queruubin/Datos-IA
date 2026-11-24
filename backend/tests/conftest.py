@@ -4,7 +4,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from app.domain import SourceMetadata
+from app.domain import DataVersion, SourceMetadata
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -35,11 +35,23 @@ def pp_progress_frame() -> pd.DataFrame:
 
 
 def pp_commitments_frame() -> pd.DataFrame:
+    """Raw 'presupuesto comprometido' sheet, consistent with the miniature curated package."""
     return pd.DataFrame({
-        "Vigencia Ejecución": [2025, 2026],
-        "No_Localidad": [4, 7],
-        "Sector": ["Gobierno", "GOBIERNO"],
-        "Valor CRP asignado presupuestos participativos": [1000.0, 2000.0],
+        "Vigencia Ejecución": [2025, 2026, 2026],
+        "No_Localidad": [4, 7, 4],
+        "Sector": ["Cultura", "GOBIERNO", "CULTURA"],
+        "Cod_Meta_Proyecto_Extendida": [22511, 22512, 22512],
+        "No_CRP": [900, 960, 950],
+        "Fecha_Registro": pd.to_datetime(["2025-07-15", "2026-08-11", "2026-08-11"]),
+        "No_Compromiso": ["679 2025", "1 2026", "628 2026"],
+        "Compromiso": ["CONVENIO", "CONTRATO", "CONVENIO"],
+        "Plazo": [169, 30, 142],
+        "Objeto": ["Objeto", "Objeto", "Objeto"],
+        "Modalidad_Seleccion": [10, 10, 10],
+        "Descripcion_Mod_Selec": ["DIRECTA", "DIRECTA", "DIRECTA"],
+        "Tipo_Doc_BP_Beneficiario": ["NIT", "NIT", "NIT"],
+        "Valor CRP asignado presupuestos participativos": [600.0, 2000.0, 700.0],
+        "Codigo_Propuestas_Financiadas_CRP": ["101;102", "1", "105"],
     })
 
 
@@ -63,7 +75,6 @@ class FakeCatalog:
         self.files = {
             "https://example.org/pac_mayo_2025.csv": pac_may,
             "https://example.org/pac_junio_2025.csv": pac_june,
-            "https://example.org/pqrs.csv": (FIXTURES / "pqrs_sample.csv").read_bytes(),
             PP_PROGRESS_URL: build_ods({
                 "Hoja1": pp_progress_frame(),
                 "Junk": pd.DataFrame(),  # the real files carry dozens of empty sheets
@@ -81,11 +92,6 @@ class FakeCatalog:
                     {"name": "Metadata PAC", "format": "CSV",
                      "url": "https://example.org/metadata.csv"},
                 ],
-            },
-            "db9d7291-0308-475e-bd81-cd222c13fca4": {
-                "title": "PQRS SDG",
-                "resources": [{"name": "PQRS", "format": "CSV",
-                               "url": "https://example.org/pqrs.csv"}],
             },
             "3ded79df-ec9e-4f92-a949-ca8b1ae12d7d": {
                 "title": "Presupuestos Participativos",
@@ -113,15 +119,38 @@ class InMemoryStore:
     def __init__(self, metadata: list[SourceMetadata] | None = None) -> None:
         self.tables: dict[str, pd.DataFrame] = {}
         self.metadata: dict[str, SourceMetadata] = {m.source_id: m for m in metadata or []}
+        self.version: DataVersion | None = None
 
     def write_table(self, name: str, frame: pd.DataFrame) -> None:
         self.tables[name] = frame
 
+    def read_table(self, name: str) -> pd.DataFrame:
+        if name not in self.tables:
+            raise KeyError(name)
+        return self.tables[name]
+
+    def write_relational_model(self, tables) -> None:
+        self.tables.update(tables)
+
+    def drop_tables(self, names) -> None:
+        for name in names:
+            self.tables.pop(name, None)
+
     def write_source_metadata(self, metadata: SourceMetadata) -> None:
         self.metadata[metadata.source_id] = metadata
 
+    def delete_source_metadata(self, source_ids) -> None:
+        for source_id in source_ids:
+            self.metadata.pop(source_id, None)
+
     def read_source_metadata(self) -> list[SourceMetadata]:
         return sorted(self.metadata.values(), key=lambda m: m.source_id)
+
+    def read_data_version(self) -> DataVersion | None:
+        return self.version
+
+    def write_data_version(self, version: DataVersion) -> None:
+        self.version = version
 
 
 @pytest.fixture
@@ -129,6 +158,3 @@ def pac_bytes() -> bytes:
     return (FIXTURES / "pac_junio_2025.csv").read_bytes()
 
 
-@pytest.fixture
-def pqrs_bytes() -> bytes:
-    return (FIXTURES / "pqrs_sample.csv").read_bytes()

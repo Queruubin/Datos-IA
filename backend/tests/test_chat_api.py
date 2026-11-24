@@ -6,14 +6,22 @@ from app.application import AgentTools, AskQuestion
 from app.application.prompts import DISCLAIMER
 from app.config import Settings
 from app.domain import DraftAnswer, ToolCall
-from tests.agent_fakes import InMemoryGaps, ScriptedLLM, build_fixture_db
+from tests.agent_fakes import FixedRate, InMemoryGaps, ScriptedLLM, build_fixture_db
 from tests.conftest import InMemoryStore
 
 
 def settings(tmp_path, **overrides) -> Settings:
     values = {"gemini_api_key": None, "duckdb_path": tmp_path / "none.duckdb",
-              "gap_log_path": tmp_path / "gaps.duckdb", **overrides}
+              "gap_log_path": tmp_path / "gaps.duckdb",
+              "usage_log_path": tmp_path / "usage.duckdb", **overrides}
     return Settings(_env_file=None, **values)
+
+
+def make_app(tmp_path, **kwargs):
+    """App wired with fakes only: no network (fixed USD→COP rate) and files under tmp_path."""
+    values = {"store": InMemoryStore(), "settings": settings(tmp_path),
+              "exchange_rate": FixedRate(), **kwargs}
+    return create_app(**values)
 
 
 def agent(tmp_path) -> AskQuestion:
@@ -26,7 +34,7 @@ def agent(tmp_path) -> AskQuestion:
 
 
 def test_chat_returns_503_without_gemini_key(tmp_path):
-    client = TestClient(create_app(store=InMemoryStore(), settings=settings(tmp_path)))
+    client = TestClient(make_app(tmp_path))
 
     response = client.post("/api/chat", json={"question": "¿Cuánto se ejecutó?"})
 
@@ -37,9 +45,7 @@ def test_chat_returns_503_without_gemini_key(tmp_path):
 
 
 def test_chat_answers_with_evidence_and_disclaimer(tmp_path):
-    client = TestClient(create_app(
-        store=InMemoryStore(), ask_question=agent(tmp_path), settings=settings(tmp_path)
-    ))
+    client = TestClient(make_app(tmp_path, ask_question=agent(tmp_path)))
 
     response = client.post("/api/chat", json={"question": "¿Cuánto se ejecutó en 2025?"})
 
@@ -52,9 +58,7 @@ def test_chat_answers_with_evidence_and_disclaimer(tmp_path):
 
 
 def test_chat_validates_question_length(tmp_path):
-    client = TestClient(create_app(
-        store=InMemoryStore(), ask_question=agent(tmp_path), settings=settings(tmp_path)
-    ))
+    client = TestClient(make_app(tmp_path, ask_question=agent(tmp_path)))
 
     assert client.post("/api/chat", json={"question": ""}).status_code == 422
     assert client.post("/api/chat", json={"question": "   "}).status_code == 422
@@ -62,9 +66,8 @@ def test_chat_validates_question_length(tmp_path):
 
 
 def test_chat_rate_limit_returns_429(tmp_path):
-    client = TestClient(create_app(
-        store=InMemoryStore(), ask_question=agent(tmp_path), settings=settings(tmp_path),
-        rate_limiter=RateLimiter(limit=2),
+    client = TestClient(make_app(
+        tmp_path, ask_question=agent(tmp_path), rate_limiter=RateLimiter(limit=2)
     ))
 
     codes = [
@@ -87,7 +90,7 @@ def test_rate_limiter_window_expires():
 
 
 def test_cors_allows_the_frontend_origin(tmp_path):
-    client = TestClient(create_app(store=InMemoryStore(), settings=settings(tmp_path)))
+    client = TestClient(make_app(tmp_path))
 
     response = client.options("/api/chat", headers={
         "Origin": "http://localhost:5173", "Access-Control-Request-Method": "POST",
@@ -101,8 +104,6 @@ def test_llm_failure_returns_502(tmp_path):
         def run(self, question):
             raise ConnectionError("network down")
 
-    client = TestClient(create_app(
-        store=InMemoryStore(), ask_question=FailingAgent(), settings=settings(tmp_path)
-    ))
+    client = TestClient(make_app(tmp_path, ask_question=FailingAgent()))
 
     assert client.post("/api/chat", json={"question": "hola"}).status_code == 502

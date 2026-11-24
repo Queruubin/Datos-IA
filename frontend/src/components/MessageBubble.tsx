@@ -1,5 +1,6 @@
 import type { ChatResponse } from '../api/types'
 import type { ChatMessage } from '../hooks/useChat'
+import { usageLine } from '../lib/formatUsage'
 import { AnswerText } from './AnswerText'
 import { EvidenceCard } from './EvidenceCard'
 import { GapCard } from './GapCard'
@@ -40,6 +41,14 @@ function AssistantContent({ messageId, response }: { messageId: string; response
             ))}
           </ul>
         </section>
+      )}
+      {response.usage && (
+        <p
+          className="text-xs text-slate-500 tabular-nums"
+          title="Equivalente en el plan pagado de Gemini. Con el plan gratuito el costo real es $0."
+        >
+          {usageLine(response.usage)}
+        </p>
       )}
     </div>
   )

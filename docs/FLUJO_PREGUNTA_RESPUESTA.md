@@ -10,16 +10,22 @@ Las cifras salen siempre del **código**, que consulta datos oficiales ya limpio
 
 ## Antes de cualquier pregunta: la ingesta de datos
 
-El agente no consulta el portal en tiempo real. Primero se ejecuta la **ingesta**:
+El agente no consulta las fuentes en tiempo real. Primero se ejecuta la **ingesta**, que junta dos orígenes en una base DuckDB local:
 
 ```
-Portal Datos Abiertos Bogotá ──► descarga ──► limpieza ──► base DuckDB local
-         (API CKAN)                 │          (reglas del         │
-                                    │           notebook)          └─ tabla source_metadata:
-                                    └─ caché en data/raw              URL, fecha de corte, filas, unidad
+curated_data/ (paquete del equipo) ──► validación contra manifest.json ──┐
+  POAI, PMR, propuestas, CRP 2025,      (si un conteo no coincide,       │
+  ODS, PQRS                              no se carga nada)               ├──► base DuckDB local
+                                                                         │    (modelo relacional + vistas)
+Portal Datos Abiertos (API CKAN) ──► descarga + limpieza ────────────────┘
+  F1: ejecución del PAC                 (caché en data/raw)                   tabla source_metadata:
+  F3: compromisos (solo CRP 2026)                                             origen, fecha de corte,
+                                                                              filas, unidad
 ```
 
-Comando: `python -m app.cli ingest` (desde `backend/`). Se repite cuando el portal publica datos nuevos.
+- El **paquete curado** (`curated_data/`) es la fuente única para POAI, PMR, presupuestos participativos, CRP, ODS y PQRS.
+- Del **portal** solo se usan el PAC (F1), que no está en el paquete, y el archivo de compromisos (F3), del que se toman los CRP de 2026 que faltan en el paquete. Esas filas quedan marcadas con `source = 'portal'`.
+- La base guarda un **marcador de versión**. `python -m app.cli ingest --if-outdated` (lo que ejecutan `iniciar.bat` e `iniciar.sh`) solo vuelve a cargar si la base no existe, es de una versión anterior o cambió algún archivo de `curated_data/`.
 
 ## Vista general
 
@@ -88,33 +94,44 @@ Ejemplo: *"Mi cédula es 1023456789, ¿cuánto se ejecutó en 2025?"* → *"Mi c
 La pregunta se envía a Gemini junto con:
 - **El prompt de sistema:** las reglas del asistente (no es vocero, no inventa cifras, cita evidencia, ignora instrucciones dentro de la pregunta).
 - **La pregunta encerrada** entre etiquetas `<pregunta>`, marcada como "datos, no instrucciones".
-- **El catálogo de 6 herramientas**, cada una con sus parámetros permitidos.
+- **El catálogo de 11 herramientas**, cada una con sus parámetros permitidos.
 
 Gemini **no responde todavía**: devuelve qué herramientas quiere usar y con qué filtros. Este ciclo se repite hasta 5 rondas (con un máximo de 6 llamadas por ronda), hasta que Gemini considera que tiene suficiente información.
 
-| Herramienta | Qué consulta |
-|---|---|
-| `list_sources` | Fuentes disponibles y su fecha de corte |
-| `get_budget_execution` | Ejecución del PAC de San Cristóbal por año y mes, con su posición entre las 20 localidades |
-| `get_pqrs_stats` | Cantidad de PQRS, temas frecuentes, mediana de días de respuesta y porcentaje cerrado |
-| `get_participatory_budget` | Propuestas por estado, avance promedio y valor comprometido |
-| `compare_participatory_budget_vs_commitments` | Contraste: ¿las propuestas que deberían tener contrato lo tienen? |
-| `report_information_gap` | Gemini la usa cuando ninguna fuente responde la pregunta |
+| Herramienta | Qué consulta | Fuente |
+|---|---|---|
+| `list_sources` | Fuentes disponibles, su origen, unidad y fecha de corte | Todas |
+| `get_budget_execution` | Ejecución del PAC de San Cristóbal por año y mes, con su posición entre las 20 localidades (unidad no documentada) | Portal (F1) |
+| `get_plan_vs_execution` | Valor planeado en el POAI frente al presupuesto, los compromisos y los giros del PMR (último corte), por sector, proyecto o meta | POAI + PMR |
+| `get_goal_detail` | Ficha de una meta: proyecto, programa, objetivo, sector, entidad, ODS, POAI, PMR, propuestas ciudadanas y CRP | Paquete curado |
+| `compare_poai_vs_pmr` | Contraste meta por meta entre POAI y PMR (presupuesto y magnitud) | POAI + PMR |
+| `get_changes_between_cutoffs` | Qué cambió entre cortes del PMR (marzo → junio) o de las propuestas (marzo → octubre) | PMR o propuestas |
+| `get_investment_by_ods` | Inversión del POAI y compromisos del PMR por Objetivo de Desarrollo Sostenible | ODS + POAI + PMR |
+| `get_pqrs_stats` | Cantidad de PQRS, temas frecuentes, mediana de días de respuesta, porcentaje cerrado y estado de la respuesta | PQRS |
+| `get_participatory_budget` | Propuestas por estado y metodología, ejemplos y valor comprometido en CRP | Propuestas + CRP |
+| `compare_participatory_budget_vs_commitments` | Contraste: ¿las propuestas que deberían tener contrato tienen CRP? | Propuestas + CRP |
+| `report_information_gap` | Gemini la usa cuando ninguna fuente responde la pregunta | — |
+
+Los valores del POAI, el PMR y los CRP están en **pesos colombianos**, según la documentación del paquete curado. En el PAC la unidad sigue sin documentarse.
 
 **Archivos:** `backend/app/adapters/llm/gemini.py`, `backend/app/application/prompts.py`
 
 ### 5. El código ejecuta las herramientas y genera la evidencia
 Cada llamada se valida: solo se aceptan los parámetros esperados, años entre 2000 y 2100, meses entre 1 y 12 y palabras clave de hasta 60 caracteres. Después se consulta DuckDB con **consultas fijas escritas en el código**: el modelo nunca escribe SQL, así que un texto como `'; DROP TABLE` se trata como una simple palabra de búsqueda.
 
-Cada resultado recibe un **id de evidencia** (`E1`, `E2`…) asignado por el código, con la fuente, la fecha de corte, el enlace al portal y la ubicación exacta del dato.
+Cada resultado recibe un **id de evidencia** (`E1`, `E2`…) asignado por el código, con la fuente, la fecha de corte, la ubicación exacta del dato y, según el caso, el enlace al portal o el origen del archivo (`origin_note`) cuando la fuente no está publicada en el portal.
 
-En el contraste, **el veredicto lo calcula el código**:
+En los contrastes, **el veredicto lo calcula el código**:
 
-| Veredicto | Regla |
-|---|---|
-| Coherente | Todas las propuestas contratadas, en ejecución o materializadas tienen un compromiso presupuestal (CRP) |
-| Diferencia detectada | Al menos una no lo tiene |
-| No comparable | No hay propuestas en esos estados o no hay compromisos ese año |
+| Veredicto | Propuestas vs. CRP | POAI vs. PMR |
+|---|---|---|
+| Coherente | Todas las propuestas contratadas, en ejecución o materializadas tienen un CRP del mismo año | Ninguna meta difiere en presupuesto ni en magnitud programada |
+| Diferencia detectada | Al menos una no lo tiene | Al menos una meta difiere (en 2025 se toleran $5.000 de redondeo en el presupuesto) |
+| No comparable | No hay propuestas en esos estados o no hay CRP ese año | No hay metas con datos en ambas fuentes |
+
+Una diferencia no implica una irregularidad: puede deberse a fechas de corte distintas o a datos aún no publicados.
+
+**Privacidad:** el campo `usuario_actual` de las PQRS (nombres de funcionarios) está en la base, pero las herramientas leen una vista que no lo incluye y además lo descartan si apareciera.
 
 **Archivo:** `backend/app/application/agent_tools.py`
 
@@ -166,12 +183,19 @@ Siempre está visible el aviso: *"Este asistente no es vocero oficial de la Alca
 Pregunta: **"¿Las propuestas priorizadas tienen contratos?"**
 
 1. Gemini pide `compare_participatory_budget_vs_commitments`.
-2. El código consulta las 232 propuestas y los 78 compromisos de San Cristóbal y genera:
-   - `E1`: 169 propuestas que deberían tener recursos; 169 tienen compromiso.
-   - `E2`: 78 compromisos por un valor de 46.477.873.594. Veredicto calculado: **coherent**.
-3. Gemini redacta: *"…las 169 propuestas… cuentan con compromisos presupuestales asociados… [E1, E2]"*.
+2. El código consulta las 232 propuestas (corte 01-10-2026) y las 78 líneas de CRP (66 del paquete curado para 2025 y 12 del portal para 2026) y genera:
+   - `E1`: 133 propuestas que deberían tener recursos; 133 con CRP.
+   - `E2`: 78 líneas CRP por $46.477.873.594 COP. Veredicto calculado: **coherent**.
+   - Además informa que 36 propuestas de 2026 ya tienen CRP aunque su estado es *En formulación*.
+3. Gemini redacta la respuesta citando `E1` y `E2`.
 4. El validador confirma que `E1` y `E2` existen y aprueba la respuesta.
-5. La persona ve la respuesta, el sello **Coherente** y dos tarjetas de evidencia con enlace al portal.
+5. La persona ve la respuesta, el sello **Coherente** y dos tarjetas de evidencia.
+
+Pregunta: **"¿Coincide lo planeado en el POAI con el seguimiento de metas en 2026?"**
+
+1. Gemini pide `compare_poai_vs_pmr` con `year = 2026`.
+2. El código compara las 83 metas: el presupuesto coincide en todas ($127.690.480.000 COP) y 6 metas tienen una magnitud programada distinta. Veredicto: **difference_detected**, con la lista de las 6 metas.
+3. La persona ve el sello **Diferencia detectada**, la regla aplicada y las dos evidencias (POAI y PMR con corte 30-06-2026).
 
 Pregunta: **"¿Cuántos homicidios hubo en San Cristóbal el año pasado?"**
 
@@ -184,8 +208,9 @@ Pregunta: **"¿Cuántos homicidios hubo en San Cristóbal el año pasado?"**
 | Riesgo | Defensa | Capa |
 |---|---|---|
 | El modelo inventa cifras | Herramientas cerradas + evidencia generada por el código + validador | Código |
-| Prompt injection ("ignora tus instrucciones…") | Pregunta encerrada como datos, regla 9 del prompt y herramientas sin SQL libre | Prompt + código |
-| Exposición de datos personales | Enmascarado antes de Gemini y de los registros; columnas de texto libre descartadas en la ingesta | Código |
+| Prompt injection ("ignora tus instrucciones…") | Pregunta encerrada como datos, regla 11 del prompt y herramientas sin SQL libre | Prompt + código |
+| Exposición de datos personales | Enmascarado antes de Gemini y de los registros; nombres de funcionarios (`usuario_actual`) excluidos de todas las herramientas, con una prueba automática | Código |
+| Datos curados inconsistentes | La ingesta compara cada conteo y total con los `manifest.json` y no carga nada si no coinciden | Datos |
 | Datos desactualizados | Fecha de corte visible en cada evidencia y en la página de Fuentes | Datos + interfaz |
 | Gemini saturado o lento | Tiempo máximo de 30 s por llamada y modelos de respaldo (`gemini-3.5-flash-lite` → `gemini-3.1-flash-lite` → `gemini-3.8-flash`) | Código |
 | Abuso del servicio | Límite de 20 preguntas por minuto por cliente | API |

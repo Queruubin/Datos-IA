@@ -56,16 +56,16 @@ if errorlevel 1 goto :step_failed
 echo [ok] Backend listo.
 
 rem ---------------------------------------------------------------
-rem 4. Data: download and clean the open data (first run only)
+rem 4. Data: load the curated package and download the portal data.
+rem    Runs only when the database is missing or outdated (new data
+rem    version or changed files in curated_data); otherwise it is instant.
 rem ---------------------------------------------------------------
-if exist "backend\data\san_cristobal.duckdb" goto :data_ready
-echo [..] Descargando y limpiando los datos del portal (solo la primera vez, puede tardar unos minutos)...
+echo [..] Revisando los datos (la primera vez o tras una actualizacion puede tardar unos minutos)...
 pushd backend
-".venv\Scripts\python.exe" -m app.cli ingest
+".venv\Scripts\python.exe" -m app.cli ingest --if-outdated
 set "INGEST_RESULT=%errorlevel%"
 popd
 if not "%INGEST_RESULT%"=="0" goto :step_failed
-:data_ready
 echo [ok] Datos listos.
 
 rem ---------------------------------------------------------------

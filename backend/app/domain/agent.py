@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
 
+from app.domain.usage import LLMUsage, QuestionUsage
+
 AnswerStatus = Literal["answered", "information_gap", "needs_clarification"]
 Verdict = Literal["coherent", "difference_detected", "not_comparable"]
 
@@ -16,9 +18,10 @@ class Evidence:
     source_id: str
     title: str
     data_cutoff: str | None
-    portal_url: str
+    portal_url: str | None  # None when the source is not published on the open-data portal
     locator: str  # human-readable pointer: table + filter used
     summary: str
+    origin_note: str | None = None  # where the data comes from when there is no portal URL
 
 
 @dataclass(frozen=True)
@@ -56,7 +59,7 @@ class ToolOutcome:
                 {
                     "id": item.id, "source_id": item.source_id, "title": item.title,
                     "data_cutoff": item.data_cutoff, "locator": item.locator,
-                    "summary": item.summary,
+                    "summary": item.summary, "origin_note": item.origin_note,
                 }
                 for item in self.evidence
             ],
@@ -72,6 +75,7 @@ class DraftAnswer:
     status: AnswerStatus
     gap_topic: str | None = None
     gap_missing_data: str | None = None
+    usage: LLMUsage | None = None  # tokens of the call that produced this draft
 
 
 @dataclass(frozen=True)
@@ -89,6 +93,7 @@ class ChatAnswer:
     evidence: list[Evidence]
     comparison: dict[str, Any] | None = None
     gap: GapInfo | None = None
+    usage: QuestionUsage | None = None
 
 
 @dataclass(frozen=True)

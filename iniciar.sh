@@ -45,10 +45,9 @@ echo "[..] Instalando o actualizando dependencias del backend..."
 backend/.venv/bin/python -m pip install --quiet --disable-pip-version-check -e backend
 echo "[ok] Backend listo."
 
-if [ ! -f backend/data/san_cristobal.duckdb ]; then
-  echo "[..] Descargando y limpiando los datos (solo la primera vez, puede tardar unos minutos)..."
-  (cd backend && .venv/bin/python -m app.cli ingest)
-fi
+# Loads the curated package and the portal data only when the database is missing or outdated.
+echo "[..] Revisando los datos (la primera vez o tras una actualización puede tardar unos minutos)..."
+(cd backend && .venv/bin/python -m app.cli ingest --if-outdated)
 echo "[ok] Datos listos."
 
 echo "[..] Instalando o actualizando dependencias del frontend..."

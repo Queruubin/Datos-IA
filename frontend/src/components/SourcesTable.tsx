@@ -27,7 +27,12 @@ export function SourcesTable({ sources }: SourcesTableProps) {
               <dt className="text-slate-600">Unidad</dt>
               <dd className="break-words text-slate-900">{formatUnit(source.unit)}</dd>
             </dl>
-            {isSafeUrl(source.portal_url) && (
+            {source.origin_note && (
+              <p className="mt-2 text-sm break-words text-slate-700">
+                <span className="font-medium text-slate-900">Origen:</span> {source.origin_note}
+              </p>
+            )}
+            {isSafeUrl(source.portal_url) ? (
               <a
                 href={source.portal_url}
                 target="_blank"
@@ -38,6 +43,8 @@ export function SourcesTable({ sources }: SourcesTableProps) {
                 <ExternalIcon />
                 <span className="sr-only">(se abre en una pestaña nueva)</span>
               </a>
+            ) : (
+              <p className="mt-3 text-sm text-slate-600">No publicada en el portal de Datos Abiertos.</p>
             )}
           </article>
         </li>

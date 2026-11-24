@@ -2,7 +2,7 @@ import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import type { ChatResponse, Verdict } from '../api/types'
-import { chatResponse, evidence } from '../test/fixtures'
+import { chatResponse, evidence, questionUsage } from '../test/fixtures'
 import { MessageBubble } from './MessageBubble'
 
 const renderAnswer = (response: ChatResponse) =>
@@ -42,6 +42,17 @@ describe('MessageBubble — answered', () => {
     renderAnswer(chatResponse({ evidence: [evidence({ portal_url: 'javascript:alert(1)' })] }))
 
     expect(screen.queryByRole('link', { name: /Ver fuente/ })).not.toBeInTheDocument()
+  })
+
+  it('shows the origin of evidence that has no open-data portal link', () => {
+    renderAnswer(
+      chatResponse({
+        evidence: [evidence({ portal_url: null, origin_note: 'Archivo POAI entregado por la Alcaldía Local.' })],
+      }),
+    )
+
+    expect(screen.queryByRole('link', { name: /Ver fuente/ })).not.toBeInTheDocument()
+    expect(screen.getByText('Archivo POAI entregado por la Alcaldía Local.')).toBeInTheDocument()
   })
 })
 
@@ -105,5 +116,27 @@ describe('MessageBubble — other statuses', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Intentar de nuevo' }))
     expect(onRetry).toHaveBeenCalledWith('e1')
+  })
+})
+
+describe('MessageBubble — usage line', () => {
+  it('shows tokens and paid-plan equivalent cost under the answer', () => {
+    renderAnswer(chatResponse({ usage: questionUsage() }))
+
+    const line = screen.getByText('≈ 3.240 tokens · USD 0,0021 · COP 8')
+    expect(line).toHaveAttribute('title', expect.stringContaining('el costo real es $0'))
+  })
+
+  it('shows only tokens when the cost is unknown', () => {
+    renderAnswer(chatResponse({ usage: questionUsage({ cost_usd: null, cost_cop: null }) }))
+
+    expect(screen.getByText('≈ 3.240 tokens')).toBeInTheDocument()
+    expect(screen.queryByText(/USD/)).not.toBeInTheDocument()
+  })
+
+  it('shows nothing when the backend sends no usage', () => {
+    renderAnswer(chatResponse())
+
+    expect(screen.queryByText(/tokens/)).not.toBeInTheDocument()
   })
 })

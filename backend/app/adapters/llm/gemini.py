@@ -13,7 +13,7 @@ from google.genai import errors, types
 from pydantic import BaseModel, Field, ValidationError
 
 from app.application.prompts import COMPOSE_INSTRUCTIONS, wrap_question
-from app.domain import DraftAnswer, ToolCall, ToolOutcome, ToolSpec
+from app.domain import DraftAnswer, LLMUsage, ToolCall, ToolOutcome, ToolSpec
 from app.ports import LLMOutputError
 
 logger = logging.getLogger(__name__)
@@ -34,6 +34,11 @@ class ModelSelector:
         self._models = models
         self._index = 0
 
+    @property
+    def current_model(self) -> str:
+        """The model that answered the last successful call (fallbacks included)."""
+        return self._models[self._index]
+
     def generate(self, contents: Any, config: types.GenerateContentConfig) -> Any:
         while True:
             model = self._models[self._index]
@@ -48,6 +53,26 @@ class ModelSelector:
                 logger.warning("Gemini model %s unavailable (code=%s); falling back to %s",
                                model, error.code, self._models[self._index + 1])
                 self._index += 1
+
+
+def extract_usage(response: Any, model: str) -> LLMUsage:
+    """Token counts from `response.usage_metadata` (any field may be None or missing → 0)."""
+    metadata = getattr(response, "usage_metadata", None)
+
+    def count(name: str) -> int:
+        return int(getattr(metadata, name, None) or 0)
+
+    input_tokens = count("prompt_token_count")
+    output_tokens = count("candidates_token_count")
+    thinking_tokens = count("thoughts_token_count")
+    total = count("total_token_count") or input_tokens + output_tokens + thinking_tokens
+    return LLMUsage(
+        model=model,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        thinking_tokens=thinking_tokens,
+        total_tokens=total,
+    )
 
 
 class FinalAnswerSchema(BaseModel):
@@ -113,17 +138,22 @@ class GeminiLLM:
             response_mime_type="application/json",
             response_json_schema=FinalAnswerSchema.model_json_schema(),
         )
-        response = ModelSelector(self._client, self._models).generate(prompt, config)
+        selector = ModelSelector(self._client, self._models)
+        response = selector.generate(prompt, config)
+        usage = extract_usage(response, selector.current_model)
         try:
             parsed = FinalAnswerSchema.model_validate_json(response.text or "")
         except ValidationError as error:
-            raise LLMOutputError("Gemini final answer does not match the schema") from error
+            raise LLMOutputError(
+                "Gemini final answer does not match the schema", usage=usage
+            ) from error
         return DraftAnswer(
             answer=parsed.answer,
             cited_evidence_ids=parsed.cited_evidence_ids,
             status=parsed.status,
             gap_topic=parsed.gap_topic or None,
             gap_missing_data=parsed.gap_missing_data or None,
+            usage=usage,
         )
 
 
@@ -134,6 +164,7 @@ class GeminiPlanningSession:
                  question: str) -> None:
         self._selector = selector
         self._config = config
+        self.usage: list[LLMUsage] = []
         self._contents: list[types.Content] = [
             types.Content(role="user", parts=[types.Part.from_text(text=wrap_question(question))])
         ]
@@ -151,6 +182,7 @@ class GeminiPlanningSession:
             self._contents.append(types.Content(role="user", parts=parts))
 
         response = self._selector.generate(self._contents, self._config)
+        self.usage.append(extract_usage(response, self._selector.current_model))
         calls = response.function_calls or []
         if calls:
             # Append the model turn as-is: it carries the thought signatures Gemini requires.

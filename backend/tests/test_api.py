@@ -37,3 +37,20 @@ def test_sources_empty_before_ingestion():
     client = TestClient(create_app(store=InMemoryStore()))
 
     assert client.get("/api/sources").json() == []
+
+
+def test_curated_sources_have_no_portal_url_but_an_origin_note():
+    store = InMemoryStore([
+        SourceMetadata(
+            source_id="POAI", title="POAI San Cristóbal", table_name="poai", portal_url=None,
+            resource_urls=["POAI_San_Cristobal_2026(2).xlsx"], data_cutoff=None, rows=166,
+            unit="COP (pesos colombianos)", ingested_at=datetime(2026, 11, 22, tzinfo=UTC),
+            origin_note="Archivo POAI entregado por la Alcaldía Local",
+        )
+    ])
+    client = TestClient(create_app(store=store))
+
+    [source] = client.get("/api/sources").json()
+
+    assert source["portal_url"] is None
+    assert source["origin_note"] == "Archivo POAI entregado por la Alcaldía Local"
