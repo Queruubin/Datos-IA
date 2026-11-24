@@ -24,9 +24,48 @@ export interface Comparison {
   [key: string]: unknown
 }
 
+/**
+ * Why the answer is an information gap. Only `unpublished_data` suggests a right-of-petition
+ * draft. Older backends do not send it: treat a missing kind as `unpublished_data`.
+ */
+export type GapKind = 'unpublished_data' | 'out_of_scope' | 'unverified'
+
 export interface Gap {
   topic: string
   missing_data: string
+  kind?: GapKind
+}
+
+export type ChartKind = 'bars' | 'grouped_bars' | 'line' | 'kpis'
+export type ChartUnit = 'COP' | 'percent' | 'count' | 'days' | 'unknown'
+
+export interface ChartSeries {
+  name: string
+  values: (number | null)[]
+}
+
+export interface ChartKpi {
+  label: string
+  value: number | null
+  unit: ChartUnit
+}
+
+/** Chart built by backend code from tool results (never by the LLM), backed by cited evidence. */
+export interface ChartSpec {
+  id: string
+  kind: ChartKind
+  title: string
+  unit: ChartUnit
+  /** Main evidence record (the badge links to its card). */
+  evidence_id: string
+  /** Every evidence record behind the chart; all are cited by the answer. */
+  evidence_ids: string[]
+  categories: string[]
+  series: ChartSeries[]
+  kpis: ChartKpi[]
+  note?: string | null
+  data_cutoff?: string | null
+  verdict?: Verdict | null
 }
 
 export interface ChatResponse {
@@ -38,6 +77,13 @@ export interface ChatResponse {
   disclaimer: string
   /** Tokens and paid-plan equivalent cost of this answer (absent on older backends). */
   usage?: QuestionUsage | null
+  /** Max 2, only for answered questions (absent on older backends). */
+  charts?: ChartSpec[]
+  /**
+   * Only for answered questions: the answer gives related data, but the specific data asked
+   * for is not published (kind is always `unpublished_data`). Absent on older backends.
+   */
+  partial_gap?: Gap | null
 }
 
 export interface QuestionUsage {

@@ -1,4 +1,5 @@
 import type { MouseEvent, ReactNode } from 'react'
+import { focusElement } from '../lib/motion'
 
 interface AnswerTextProps {
   text: string
@@ -11,12 +12,8 @@ interface AnswerTextProps {
 const REFERENCE = /\b(E\d+)\b/g
 
 function focusCard(event: MouseEvent<HTMLAnchorElement>, anchorId: string) {
-  const card = document.getElementById(anchorId)
-  if (!card) return
   // Avoid touching the URL hash, which is used for page navigation.
-  event.preventDefault()
-  card.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
-  card.focus({ preventScroll: true })
+  if (focusElement(anchorId)) event.preventDefault()
 }
 
 /** Renders the answer text, turning references like "(E1)" into links to their evidence card. */
@@ -35,7 +32,7 @@ export function AnswerText({ text, evidenceIds, anchorFor }: AnswerTextProps) {
         href={`#${anchorId}`}
         onClick={(event) => focusCard(event, anchorId)}
         aria-label={`Ver evidencia ${id}`}
-        className="mx-0.5 inline-block rounded bg-blue-100 px-1 text-xs font-bold text-blue-900 no-underline ring-1 ring-blue-300 hover:bg-blue-200 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-blue-700"
+        className="mx-0.5 inline-block rounded bg-wine-50 px-1 text-xs font-bold text-wine-800 no-underline ring-1 ring-wine-200 hover:bg-wine-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-wine-700"
       >
         {id}
       </a>,
@@ -43,5 +40,5 @@ export function AnswerText({ text, evidenceIds, anchorFor }: AnswerTextProps) {
     cursor = match.index + id.length
   }
   if (cursor < text.length) parts.push(text.slice(cursor))
-  return <p className="text-base break-words whitespace-pre-line text-slate-900">{parts}</p>
+  return <p className="text-base leading-relaxed break-words whitespace-pre-line text-ink">{parts}</p>
 }

@@ -34,29 +34,37 @@ interface VerdictBadgeProps {
   comparison: Comparison
 }
 
+/** Verdict as icon + text (never color alone). */
+export function VerdictPill({ verdict: key }: { verdict: Verdict }) {
+  const verdict = VERDICTS[key] ?? VERDICTS.not_comparable
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-sm font-semibold ${verdict.className}`}
+    >
+      {verdict.icon}
+      {verdict.label}
+    </span>
+  )
+}
+
 export function VerdictBadge({ comparison }: VerdictBadgeProps) {
   const verdict = VERDICTS[comparison.verdict] ?? VERDICTS.not_comparable
   return (
     <section
       aria-label="Resultado del contraste entre fuentes"
-      className="rounded-lg border border-slate-200 bg-white p-3"
+      className="rounded-card border border-sand-200 bg-sand-50 p-4"
     >
-      <p className="text-xs font-semibold tracking-wide text-slate-600 uppercase">Contraste entre fuentes</p>
-      <p className="mt-1">
-        <span
-          className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-sm font-semibold ${verdict.className}`}
-        >
-          {verdict.icon}
-          {verdict.label}
-        </span>
-      </p>
-      <p className="mt-2 text-sm text-slate-700">{verdict.note}</p>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <p className="eyebrow">Contraste entre fuentes</p>
+        <VerdictPill verdict={comparison.verdict} />
+      </div>
+      <p className="mt-2 text-sm leading-relaxed text-ink-muted">{verdict.note}</p>
       {comparison.rule && (
         <details className="mt-2 text-sm">
-          <summary className="cursor-pointer rounded font-medium text-blue-800 underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700">
+          <summary className="focus-ring cursor-pointer rounded font-semibold text-wine-700 hover:text-wine-900">
             ¿Cómo se hizo la comparación?
           </summary>
-          <p className="mt-2 text-slate-700">{comparison.rule}</p>
+          <p className="mt-2 text-ink-muted">{comparison.rule}</p>
         </details>
       )}
     </section>

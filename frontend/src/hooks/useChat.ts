@@ -2,12 +2,13 @@ import { useCallback, useRef, useState } from 'react'
 import { postChat } from '../api/client'
 import { errorMessage } from '../api/errors'
 import type { ChatResponse } from '../api/types'
+import { resolveSelection, type Selection } from '../lib/selection'
 
 export const MAX_QUESTION_LENGTH = 500
 
 export type ChatMessage =
   | { id: string; role: 'user'; text: string }
-  | { id: string; role: 'assistant'; response: ChatResponse }
+  | { id: string; role: 'assistant'; response: ChatResponse; question: string }
   | { id: string; role: 'error'; message: string; question: string }
 
 let counter = 0
@@ -16,34 +17,43 @@ const nextId = () => `m${++counter}`
 export interface UseChat {
   messages: ChatMessage[]
   isLoading: boolean
+  /** Question being answered right now (null when idle). */
+  pendingQuestion: string | null
   /** Disclaimer from the latest API answer, if any. */
   disclaimer: string | null
+  /** What the insight panel shows: an answer or error, the pending question, or nothing yet. */
+  selection: Selection
+  /** Opens an answer or error in the panel; null follows the latest one (or the pending question). */
+  select: (messageId: string | null) => void
   send: (question: string) => Promise<void>
   retry: (errorId: string) => Promise<void>
 }
 
 export function useChat(ask: typeof postChat = postChat): UseChat {
   const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [isLoading, setIsLoading] = useState(false)
+  const [pendingQuestion, setPendingQuestion] = useState<string | null>(null)
   const [disclaimer, setDisclaimer] = useState<string | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
   const inFlight = useRef(false)
 
   const request = useCallback(
     async (question: string) => {
       inFlight.current = true
-      setIsLoading(true)
+      setPendingQuestion(question)
+      // Follow the new question: the panel shows its loading state, then its answer.
+      setSelectedId(null)
+      const id = nextId()
       try {
         const response = await ask(question)
         if (response.disclaimer) setDisclaimer(response.disclaimer)
-        setMessages((current) => [...current, { id: nextId(), role: 'assistant', response }])
+        setMessages((current) => [...current, { id, role: 'assistant', response, question }])
       } catch (error) {
-        setMessages((current) => [
-          ...current,
-          { id: nextId(), role: 'error', message: errorMessage(error), question },
-        ])
+        setMessages((current) => [...current, { id, role: 'error', message: errorMessage(error), question }])
       } finally {
+        // The newest answer is auto-selected.
+        setSelectedId(id)
         inFlight.current = false
-        setIsLoading(false)
+        setPendingQuestion(null)
       }
     },
     [ask],
@@ -70,5 +80,8 @@ export function useChat(ask: typeof postChat = postChat): UseChat {
     [messages, request],
   )
 
-  return { messages, isLoading, disclaimer, send, retry }
+  const isLoading = pendingQuestion !== null
+  const selection = resolveSelection(messages, selectedId, pendingQuestion)
+
+  return { messages, isLoading, pendingQuestion, disclaimer, selection, select: setSelectedId, send, retry }
 }

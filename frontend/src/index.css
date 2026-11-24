@@ -1,7 +1,91 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-display: "Plus Jakarta Sans", Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  /* Wine brand ramp (primary #8e2332). 700+ on white passes WCAG AA for text. */
+  --color-wine-50: #fbf3f4;
+  --color-wine-100: #f8e9ec;
+  --color-wine-200: #eccdd3;
+  --color-wine-300: #e3a3ad;
+  --color-wine-500: #b83246;
+  --color-wine-700: #8e2332;
+  --color-wine-800: #74202b;
+  --color-wine-900: #5e1621;
+  --color-wine-950: #3a0d14;
+
+  /* Warm neutrals: canvas behind panels, hairlines, muted text (#665d5f = 6.3:1 on white). */
+  --color-sand-50: #fbf8f7;
+  --color-sand-100: #f6f1ef;
+  --color-sand-200: #ece3df;
+  --color-sand-300: #ddd0ca;
+  --color-canvas: #f4efec;
+  --color-ink: #231f20;
+  --color-ink-muted: #665d5f;
+
+  /* Chart series (validated with the dataviz palette script, light surface #ffffff). */
+  --color-chart-1: #e3a3ad;
+  --color-chart-2: #b83246;
+  --color-chart-3: #5e1621;
+  --color-chart-blue: #2a78d6;
+  --color-chart-grid: #ece3df;
+
+  /* Radius scale: tiles / cards / panels. */
+  --radius-tile: 10px;
+  --radius-card: 16px;
+  --radius-panel: 24px;
+
+  /* The only elevation level (floating panels and the composer). */
+  --shadow-panel: 0 1px 2px rgb(58 35 38 / 0.04), 0 8px 24px rgb(58 35 38 / 0.06);
+
+  --animate-panel-in: panel-in 260ms cubic-bezier(0.2, 0.7, 0.2, 1);
+  --animate-shimmer: shimmer 1.4s linear infinite;
+
+  @keyframes panel-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  @keyframes shimmer {
+    from {
+      background-position: 200% 0;
+    }
+    to {
+      background-position: -200% 0;
+    }
+  }
+}
+
+/* One focus ring for every interactive element. */
+@utility focus-ring {
+  &:focus-visible {
+    outline: 2px solid var(--color-wine-700);
+    outline-offset: 2px;
+  }
+}
+
+/* Skeleton block with a soft sweep (static when motion is reduced). */
+@utility skeleton {
+  background-color: var(--color-sand-100);
+  background-image: linear-gradient(90deg, transparent 0%, rgb(255 255 255 / 0.7) 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: var(--animate-shimmer);
+}
+
+/* Small uppercase label above titles. */
+@utility eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-wine-700);
 }
 
 html {
@@ -9,5 +93,17 @@ html {
 }
 
 body {
-  @apply bg-slate-50 text-slate-900 antialiased;
+  @apply bg-canvas text-ink antialiased;
+  font-feature-settings: "cv11", "ss01";
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

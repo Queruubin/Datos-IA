@@ -6,7 +6,7 @@ import { chatResponse, evidence, questionUsage } from '../test/fixtures'
 import { MessageBubble } from './MessageBubble'
 
 const renderAnswer = (response: ChatResponse) =>
-  render(<MessageBubble message={{ id: 'm1', role: 'assistant', response }} />)
+  render(<MessageBubble message={{ id: 'm1', role: 'assistant', response, question: '¿Pregunta de prueba?' }} />)
 
 describe('MessageBubble — answered', () => {
   it('renders the answer with evidence cards and a safe external link', () => {
@@ -92,6 +92,104 @@ describe('MessageBubble — other statuses', () => {
     expect(within(card).getByText('seguridad')).toBeInTheDocument()
     expect(within(card).getByText('Número de cámaras instaladas por barrio')).toBeInTheDocument()
     expect(within(card).getByText(/para que la Alcaldía Local sepa qué información/)).toBeInTheDocument()
+  })
+
+  it('suggests a right-of-petition draft for unpublished data', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    renderAnswer(
+      chatResponse({
+        status: 'information_gap',
+        answer: 'No encontré ese dato.',
+        evidence: [],
+        gap: { topic: 'seguridad', missing_data: 'Cámaras instaladas por barrio', kind: 'unpublished_data' },
+      }),
+    )
+
+    const card = screen.getByRole('region', { name: '¿Quieres pedir este dato a la Alcaldía?' })
+    await userEvent.click(within(card).getByRole('button', { name: 'Ver borrador' }))
+
+    const draft = within(card).getByLabelText('Borrador del derecho de petición (editable)')
+    expect((draft as HTMLTextAreaElement).value).toContain('Cámaras instaladas por barrio')
+    expect((draft as HTMLTextAreaElement).value).toContain('[Nombre completo]')
+    await userEvent.type(draft, ' Gracias.')
+
+    await userEvent.click(within(card).getByRole('button', { name: 'Copiar borrador' }))
+    expect(writeText).toHaveBeenCalledWith(expect.stringMatching(/Gracias\.$/))
+    expect(within(card).getByRole('status')).toHaveTextContent('Borrador copiado')
+
+    const file = within(card).getByRole('link', { name: /Radicar en Bogotá Te Escucha/ })
+    expect(file).toHaveAttribute('href', 'https://bogota.gov.co/sdqs/')
+    expect(file).toHaveAttribute('target', '_blank')
+    expect(file).toHaveAttribute('rel', 'noopener noreferrer')
+    expect(within(card).getByText(/Nada se envía automáticamente/)).toBeInTheDocument()
+  })
+
+  it('suggests a petition after a partial answer, keeping the answer and its evidence', async () => {
+    renderAnswer(
+      chatResponse({
+        partial_gap: { topic: 'vías', missing_data: 'Número de huecos tapados en 2025', kind: 'unpublished_data' },
+      }),
+    )
+
+    expect(screen.getByRole('article', { name: /Ranking mensual de recursos ejecutados de PAC/ })).toBeInTheDocument()
+    const note = screen.getByRole('region', { name: 'La respuesta no está completa' })
+    expect(note).toHaveTextContent('La respuesta no incluye: Número de huecos tapados en 2025')
+    expect(screen.queryByRole('region', { name: 'Este dato no está publicado' })).not.toBeInTheDocument()
+
+    const card = screen.getByRole('region', { name: '¿Quieres pedir este dato a la Alcaldía?' })
+    await userEvent.click(within(card).getByRole('button', { name: 'Ver borrador' }))
+    const draft = within(card).getByLabelText('Borrador del derecho de petición (editable)')
+    expect((draft as HTMLTextAreaElement).value).toContain('Número de huecos tapados en 2025')
+    expect(within(card).getByRole('link', { name: /Radicar en Bogotá Te Escucha/ })).toHaveAttribute(
+      'href',
+      'https://bogota.gov.co/sdqs/',
+    )
+  })
+
+  it.each([
+    ['a complete answer', null],
+    ['an out-of-scope partial gap', { topic: 'funcionarios', missing_data: 'nombre', kind: 'out_of_scope' as const }],
+  ])('does not suggest a petition for %s', (_label, partial_gap) => {
+    renderAnswer(chatResponse({ partial_gap }))
+
+    expect(screen.queryByRole('region', { name: 'La respuesta no está completa' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: '¿Quieres pedir este dato a la Alcaldía?' })).not.toBeInTheDocument()
+  })
+
+  it('selects the draft when the clipboard is not available', async () => {
+    Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true })
+    renderAnswer(
+      chatResponse({
+        status: 'information_gap',
+        evidence: [],
+        gap: { topic: 'vías', missing_data: 'huecos por barrio' },
+      }),
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: 'Ver borrador' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Copiar borrador' }))
+
+    expect(screen.getByRole('status')).toHaveTextContent('el texto quedó seleccionado')
+    expect(screen.getByLabelText('Borrador del derecho de petición (editable)')).toHaveFocus()
+  })
+
+  it.each([
+    ['out_of_scope', 'Esta pregunta está fuera de lo que puedo responder'],
+    ['unverified', 'No pude verificar la respuesta'],
+  ] as const)('does not suggest a petition for %s gaps', (kind, title) => {
+    renderAnswer(
+      chatResponse({
+        status: 'information_gap',
+        answer: 'No puedo responder eso.',
+        evidence: [],
+        gap: { topic: 'funcionarios', missing_data: 'nombre del alcalde', kind },
+      }),
+    )
+
+    expect(screen.getByRole('region', { name: title })).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: '¿Quieres pedir este dato a la Alcaldía?' })).not.toBeInTheDocument()
+    expect(screen.queryByText('nombre del alcalde')).not.toBeInTheDocument()
   })
 
   it('renders a clarification request in a neutral style', () => {

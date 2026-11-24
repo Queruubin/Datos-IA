@@ -1,11 +1,11 @@
-import { FALLBACK_DISCLAIMER } from '../lib/disclaimer'
-import { InfoIcon } from './icons'
+import { SparkIcon } from './icons'
 
 export type Page = 'chat' | 'sources' | 'usage'
 
 interface HeaderProps {
   page: Page
-  disclaimer?: string | null
+  /** Reopens the welcome flow. */
+  onShowWelcome?: () => void
 }
 
 const LINKS: { page: Page; href: string; label: string }[] = [
@@ -14,23 +14,30 @@ const LINKS: { page: Page; href: string; label: string }[] = [
   { page: 'usage', href: '#/consumo', label: 'Consumo' },
 ]
 
-export function Header({ page, disclaimer }: HeaderProps) {
+/** One compact row: logo, product name (from sm), section tabs and the introduction link. */
+export function Header({ page, onShowWelcome }: HeaderProps) {
   return (
-    <header className="border-b border-slate-200 bg-white">
-      <div className="mx-auto max-w-3xl px-4 pt-4">
-        <p className="text-sm font-medium text-blue-800">Datos abiertos · Bogotá</p>
-        <h1 className="text-xl font-bold text-slate-900 sm:text-2xl">
-          Verificador de información pública · San Cristóbal
+    <header className="relative z-30 border-b border-sand-200 bg-white">
+      <div className="flex h-14 items-center gap-2 px-4 sm:gap-3 lg:px-5">
+        <a href="#/" className="focus-ring flex min-w-0 items-center gap-2.5 rounded-tile" aria-label="Ir al chat">
+          <span
+            aria-hidden="true"
+            className="grid h-9 w-9 shrink-0 place-items-center rounded-tile bg-linear-135 from-wine-700 to-wine-900 font-display text-sm font-extrabold tracking-tight text-white"
+          >
+            SC
+          </span>
+        </a>
+        <h1 aria-label="Verificador de información pública · San Cristóbal" className="min-w-0 leading-tight max-sm:sr-only">
+          <span className="block truncate text-[15px] font-bold text-ink">
+            Verificador<span className="max-lg:hidden"> de información pública</span>
+          </span>
+          <span className="block truncate text-xs font-medium text-ink-muted">
+            San Cristóbal
+          </span>
         </h1>
-        <p
-          role="note"
-          className="mt-3 flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950"
-        >
-          <InfoIcon className="mt-0.5 h-4 w-4 shrink-0" />
-          <span>{disclaimer || FALLBACK_DISCLAIMER}</span>
-        </p>
-        <nav aria-label="Secciones" className="mt-3">
-          <ul className="flex gap-1">
+
+        <nav aria-label="Secciones" className="ml-auto">
+          <ul className="flex items-center gap-0.5 rounded-full bg-sand-100 p-1">
             {LINKS.map((link) => {
               const current = link.page === page
               return (
@@ -38,10 +45,8 @@ export function Header({ page, disclaimer }: HeaderProps) {
                   <a
                     href={link.href}
                     aria-current={current ? 'page' : undefined}
-                    className={`inline-flex min-h-11 items-center border-b-2 px-3 text-sm font-semibold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700 ${
-                      current
-                        ? 'border-blue-800 text-blue-900'
-                        : 'border-transparent text-slate-700 hover:text-slate-900'
+                    className={`focus-ring inline-flex min-h-9 items-center rounded-full px-3 text-[13px] font-semibold transition-colors sm:px-4 sm:text-sm ${
+                      current ? 'bg-white text-wine-800 shadow-sm ring-1 ring-sand-200' : 'text-ink-muted hover:text-ink'
                     }`}
                   >
                     {link.label}
@@ -51,6 +56,18 @@ export function Header({ page, disclaimer }: HeaderProps) {
             })}
           </ul>
         </nav>
+
+        {onShowWelcome && (
+          <button
+            type="button"
+            aria-label="Ver introducción"
+            onClick={onShowWelcome}
+            className="focus-ring inline-flex h-11 min-w-11 shrink-0 items-center justify-center gap-1.5 rounded-full px-2 text-sm font-semibold text-wine-700 transition-colors hover:bg-wine-50 sm:px-3"
+          >
+            <SparkIcon className="h-5 w-5 shrink-0 sm:h-4 sm:w-4" />
+            <span className="hidden sm:inline">Introducción</span>
+          </button>
+        )}
       </div>
     </header>
   )

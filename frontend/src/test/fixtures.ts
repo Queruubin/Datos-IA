@@ -1,5 +1,6 @@
 import { vi } from 'vitest'
 import type {
+  ChartSpec,
   ChatResponse,
   Evidence,
   ModelPrice,
@@ -126,3 +127,19 @@ export function mockFetch() {
   vi.stubGlobal('fetch', fetchMock)
   return fetchMock
 }
+
+export const chartSpec = (overrides: Partial<ChartSpec> = {}): ChartSpec => ({
+  id: 'C1',
+  kind: 'bars',
+  title: 'Inversión planeada 2026 por ODS (POAI)',
+  unit: 'COP',
+  evidence_id: 'E1',
+  evidence_ids: ['E1'],
+  categories: ['ODS 11 · Ciudades sostenibles', 'ODS 8 · Trabajo decente'],
+  series: [{ name: 'Planeado (POAI)', values: [25_500_000_000, 4_000_000] }],
+  kpis: [],
+  note: null,
+  data_cutoff: '2026-06-30',
+  verdict: null,
+  ...overrides,
+})

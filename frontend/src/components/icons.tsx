@@ -57,6 +57,55 @@ export function ExternalIcon({ className = 'h-4 w-4 shrink-0' }: IconProps) {
   )
 }
 
+export function SparkIcon({ className = 'h-4 w-4 shrink-0' }: IconProps) {
+  return (
+    <svg {...base} className={className}>
+      <path d="M12 3v4M12 17v4M3 12h4M17 12h4M6.3 6.3l2.5 2.5M15.2 15.2l2.5 2.5M6.3 17.7l2.5-2.5M15.2 8.8l2.5-2.5" />
+    </svg>
+  )
+}
+
+export function SendIcon({ className = 'h-5 w-5 shrink-0' }: IconProps) {
+  return (
+    <svg {...base} className={className}>
+      <path d="M12 19V5M5 12l7-7 7 7" />
+    </svg>
+  )
+}
+
+export function ChevronIcon({ className = 'h-4 w-4 shrink-0' }: IconProps) {
+  return (
+    <svg {...base} className={className}>
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  )
+}
+
+export function ArrowRightIcon({ className = 'h-4 w-4 shrink-0' }: IconProps) {
+  return (
+    <svg {...base} className={className}>
+      <path d="M5 12h14M13 6l6 6-6 6" />
+    </svg>
+  )
+}
+
+export function ChartIcon({ className = 'h-3.5 w-3.5 shrink-0' }: IconProps) {
+  return (
+    <svg {...base} className={className}>
+      <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
+    </svg>
+  )
+}
+
+export function DocIcon({ className = 'h-3.5 w-3.5 shrink-0' }: IconProps) {
+  return (
+    <svg {...base} className={className}>
+      <path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8Z" />
+      <path d="M14 3v5h5M9 13h6M9 17h4" />
+    </svg>
+  )
+}
+
 export function QuestionIcon({ className = 'h-4 w-4 shrink-0' }: IconProps) {
   return (
     <svg {...base} className={className}>

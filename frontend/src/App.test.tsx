@@ -3,11 +3,19 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 import { EXAMPLE_QUESTIONS } from './lib/examples'
+import { WELCOME_DONE_KEY } from './lib/storage'
 import { chatResponse, DISCLAIMER, jsonResponse, mockFetch, source } from './test/fixtures'
 
 beforeEach(() => {
   window.location.hash = ''
+  window.localStorage.clear()
+  // Most tests start in the chat: the welcome flow has its own tests below.
+  window.localStorage.setItem(WELCOME_DONE_KEY, '1')
 })
+
+/** Quick-start cards are named by their title plus the question they send. */
+const exampleButton = (index: number) =>
+  screen.getByRole('button', { name: (name) => name.includes(EXAMPLE_QUESTIONS[index]) })
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -29,13 +37,13 @@ describe('Chat page', () => {
     fetchMock.mockResolvedValue(jsonResponse(chatResponse()))
     render(<App />)
 
-    await userEvent.click(screen.getByRole('button', { name: EXAMPLE_QUESTIONS[0] }))
+    await userEvent.click(exampleButton(0))
 
     expect(JSON.parse(fetchMock.mock.calls[0][1]?.body as string)).toEqual({ question: EXAMPLE_QUESTIONS[0] })
     expect(await screen.findByText(/Se ejecutó el 45 % del presupuesto/)).toBeInTheDocument()
     expect(screen.getByRole('article', { name: /Ranking mensual/ })).toBeInTheDocument()
     // Examples disappear once the conversation starts.
-    expect(screen.queryByRole('button', { name: EXAMPLE_QUESTIONS[0] })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: (name) => name.includes(EXAMPLE_QUESTIONS[0]) })).not.toBeInTheDocument()
   })
 
   it('limits the input to 500 characters and shows the counter', async () => {
@@ -89,7 +97,7 @@ describe('Chat page', () => {
     mockFetch().mockResolvedValue(jsonResponse({ detail: 'detalle del servidor' }, status))
     render(<App />)
 
-    await userEvent.click(screen.getByRole('button', { name: EXAMPLE_QUESTIONS[1] }))
+    await userEvent.click(exampleButton(1))
 
     expect(await screen.findByText(message)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Intentar de nuevo' })).toBeInTheDocument()
@@ -102,7 +110,7 @@ describe('Chat page', () => {
       .mockResolvedValueOnce(jsonResponse(chatResponse()))
     render(<App />)
 
-    await userEvent.click(screen.getByRole('button', { name: EXAMPLE_QUESTIONS[2] }))
+    await userEvent.click(exampleButton(2))
     expect(await screen.findByText(/No se pudo conectar con el servidor/)).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: 'Intentar de nuevo' }))
@@ -117,6 +125,82 @@ describe('Chat page', () => {
     render(<App />)
 
     expect(screen.getByRole('list', { name: 'Mensajes' })).toHaveAttribute('aria-live', 'polite')
+  })
+})
+
+describe('Welcome flow', () => {
+  beforeEach(() => {
+    window.localStorage.clear()
+  })
+
+  it('walks through the three steps on the first visit and asks from the last one', async () => {
+    const fetchMock = mockFetch()
+    fetchMock.mockResolvedValue(jsonResponse(chatResponse()))
+    render(<App />)
+
+    expect(screen.getByRole('heading', { level: 2, name: 'Hola. ¿Exploramos la localidad?' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Paso 1 de 3' })).toHaveAttribute('aria-current', 'step')
+    expect(screen.getByText('Páramo de Cruz Verde')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Comenzar' }))
+    const second = screen.getByRole('heading', { level: 2, name: 'Pregunta, comprende y actúa.' })
+    expect(second).toHaveFocus()
+    expect(screen.getByRole('heading', { level: 3, name: 'Actúa' })).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Continuar' }))
+    expect(screen.getByRole('heading', { level: 2, name: '¿Qué quieres saber o hacer?' })).toBeInTheDocument()
+
+    await userEvent.click(exampleButton(0))
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1]?.body as string)).toEqual({ question: EXAMPLE_QUESTIONS[0] })
+    expect(await screen.findByText(/Se ejecutó el 45 % del presupuesto/)).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Introducción' })).not.toBeInTheDocument()
+    expect(window.localStorage.getItem(WELCOME_DONE_KEY)).toBe('1')
+  })
+
+  it('can be skipped, is remembered and can be reopened from the header', async () => {
+    mockFetch()
+    const { unmount } = render(<App />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Saltar' }))
+    expect(screen.queryByRole('region', { name: 'Introducción' })).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Escribe tu pregunta')).toBeInTheDocument()
+    unmount()
+
+    render(<App />)
+    expect(screen.queryByRole('region', { name: 'Introducción' })).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Ver introducción' }))
+    expect(screen.getByRole('region', { name: 'Introducción' })).toBeInTheDocument()
+  })
+
+  it('still works when localStorage throws', async () => {
+    mockFetch()
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('blocked')
+    })
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('blocked')
+    })
+    render(<App />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Saltar' }))
+    expect(screen.getByLabelText('Escribe tu pregunta')).toBeInTheDocument()
+  })
+
+  it('credits the background photo with author, license and Wikimedia Commons links', () => {
+    mockFetch()
+    render(<App />)
+
+    expect(screen.getByRole('link', { name: 'Felipe Restrepo Acosta' })).toHaveAttribute(
+      'href',
+      'https://commons.wikimedia.org/wiki/User:Pedro_Felipe',
+    )
+    expect(screen.getByRole('link', { name: 'CC BY-SA 3.0' })).toHaveAttribute(
+      'href',
+      'https://creativecommons.org/licenses/by-sa/3.0',
+    )
+    expect(screen.getByRole('link', { name: 'Wikimedia Commons' })).toHaveAttribute('rel', 'noopener noreferrer')
   })
 })
 
