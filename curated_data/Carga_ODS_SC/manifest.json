@@ -1,0 +1,16 @@
+{
+  "ajuste_modelo_requerido": false,
+  "fuente": "archivo_plano_ods_fdl_corte_30_junio_2026.xlsx",
+  "conteos": {
+    "registros_san_cristobal": 83,
+    "ods": 13,
+    "meta_ods": 30,
+    "meta_ods_relacion": 83
+  },
+  "integridad": {
+    "metas_proyecto_unicas": 83,
+    "metas_proyecto_con_match": 83,
+    "sectores_coincidentes_con_modelo": 83
+  },
+  "decision": "No cargar métricas financieras duplicadas; ODS se modela como capa de alineación estratégica."
+}

@@ -1,0 +1,15 @@
+// AJUSTE NUEVO: catálogo Entidad
+Table entidad {
+  id_entidad smallint [pk, increment]
+  nombre_entidad varchar(150) [not null, unique]
+}
+
+// En meta_proyecto agregar:
+id_entidad smallint
+
+// Relación opcional:
+Ref: meta_proyecto.id_entidad >? entidad.id_entidad
+
+// IMPORTANTE:
+// crp_meta se mantiene SIN unique(id_crp, id_meta).
+// Es una entidad transaccional de líneas de asignación, no una tabla puente pura.

@@ -1,0 +1,17 @@
+{
+  "propuestas": 232,
+  "seguimientos": 464,
+  "cortes": {
+    "2026-03-31": 232,
+    "2026-10-01": 232
+  },
+  "cambios_estado": 22,
+  "cambios_avance": 68,
+  "ajuste_modelo_requerido": false,
+  "transformaciones": [
+    "normalización de espacios",
+    "homologación de metodología a 4 categorías",
+    "guion en clasificación poblacional convertido a NULL",
+    "fecha_corte derivada de la fecha del archivo"
+  ]
+}

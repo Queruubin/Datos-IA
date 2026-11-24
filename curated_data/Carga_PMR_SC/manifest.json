@@ -1,0 +1,39 @@
+{
+  "ajuste_modelo_requerido": false,
+  "correccion_datos_previa": {
+    "poai_2025": [
+      "22851",
+      "22852",
+      "24953",
+      "24954"
+    ],
+    "motivo": "Cruce de descripciones en el maestro 2026 usado para homologar 2025."
+  },
+  "carga": {
+    "metas_por_corte": 83,
+    "cortes": [
+      "2026-03-31",
+      "2026-06-30"
+    ],
+    "vigencias": [
+      2025,
+      2026
+    ],
+    "registros_seguimiento_meta": 332
+  },
+  "unidades": {
+    "presupuesto_programado_2025": "fuente en millones; convertido a COP x 1.000.000",
+    "compromisos_2025": "fuente ya en COP pese al encabezado",
+    "presupuesto_compromisos_giros_2026": "fuente ya en COP pese al encabezado"
+  },
+  "cambios_marzo_junio_2026": {
+    "magnitud_contratada": 17,
+    "magnitud_entregada": 14,
+    "compromisos": 9,
+    "giros": 57
+  },
+  "calidad_poai_pmr_2026": {
+    "diferencias_presupuesto": 0,
+    "diferencias_magnitud": 6
+  }
+}

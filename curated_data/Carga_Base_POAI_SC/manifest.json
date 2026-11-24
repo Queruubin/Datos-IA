@@ -1,0 +1,21 @@
+{
+  "fuentes": [
+    "POAI_San_Cristobal_2025_Homologado.xlsx",
+    "POAI_San_Cristobal_2026(2).xlsx"
+  ],
+  "conteos": {
+    "localidad": 1,
+    "sector": 12,
+    "objetivo_estrategico": 5,
+    "programa": 23,
+    "proyecto": 31,
+    "meta_proyecto": 83,
+    "poai_2025": 83,
+    "poai_2026": 83
+  },
+  "totales_poai": {
+    "2025": 130871828000,
+    "2026": 127690480000
+  },
+  "ajuste_modelo": "id_sector se mueve de proyecto a meta_proyecto"
+}

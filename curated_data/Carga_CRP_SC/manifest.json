@@ -1,0 +1,23 @@
+{
+  "ajuste_modelo": {
+    "nuevo_catalogo": "entidad",
+    "nuevo_campo": "meta_proyecto.id_entidad nullable",
+    "motivo": "Entidad es consistente por meta en PP y CRP; se estaba perdiendo un dato de referencia útil."
+  },
+  "conteos": {
+    "filas_fuente_crp": 66,
+    "crp": 31,
+    "crp_meta_lineas": 66,
+    "crp_meta_pares_distintos": 58,
+    "crp_propuesta_relaciones": 177,
+    "propuestas_financiadas_distintas": 133,
+    "entidades": 16,
+    "metas_con_entidad": 46,
+    "crp_meta_pares_repetidos": 4
+  },
+  "valor_total_crp_pp": 39514916879,
+  "integridad": {
+    "propuestas_referenciadas_no_encontradas": 0,
+    "propuestas_con_meta_incoherente": 0
+  }
+}
