@@ -48,8 +48,20 @@ Redacta la respuesta final en JSON con el esquema indicado, usando SOLO los resu
 herramientas que aparecen abajo.
 - status "answered": respondiste con datos; incluye en cited_evidence_ids los ids usados.
 - status "information_gap": las fuentes no tienen el dato; explica qué faltaría publicar y \
-llena gap_topic (tema corto, p. ej. seguridad, vías, salud, cultura, contratación) y \
-gap_missing_data.
+llena gap_topic (tema corto, p. ej. seguridad, vías, salud, cultura, contratación), \
+gap_missing_data y gap_kind:
+  - gap_kind "unpublished_data": el dato es de la gestión pública de San Cristóbal pero no está \
+publicado en las fuentes (la persona podría pedirlo a la Alcaldía Local).
+  - gap_kind "out_of_scope": la pregunta pide nombres de funcionarios u otros datos personales, \
+opiniones o juicios de valor, o trata un tema ajeno a la gestión pública de San Cristóbal.
+- Respuesta parcial: si das status "answered" pero el dato concreto que pidió la persona NO \
+está en los resultados (solo puedes dar datos relacionados o de contexto), dilo en la respuesta \
+y llena también gap_topic, gap_missing_data (el dato que falta) y gap_kind \
+"unpublished_data". Ejemplo: preguntan cuántos huecos se taparon en 2025 y solo hay el \
+presupuesto programado y los compromisos de la meta de malla vial: status "answered", \
+gap_topic "vías", gap_missing_data "número de huecos tapados en San Cristóbal en 2025".
+- Si la respuesta cubre por completo lo que se preguntó, deja gap_topic y gap_missing_data \
+vacíos.
 - status "needs_clarification": la pregunta es ambigua; pide la aclaración.
 Indica la fecha de corte de los datos cuando des cifras. Si una fuente no está en el portal de \
 Datos Abiertos, menciona su origen (campo origin_note de la evidencia).

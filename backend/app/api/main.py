@@ -17,7 +17,7 @@ from app.application import AgentTools, AskQuestion
 from app.application.prompts import DISCLAIMER, SYSTEM_PROMPT
 from app.application.usage_report import UsageReport, build_usage_report
 from app.config import Settings, get_settings
-from app.domain import ChatAnswer, ExchangeRate, QuestionUsage, SourceMetadata
+from app.domain import ChartSpec, ChatAnswer, ExchangeRate, QuestionUsage, SourceMetadata
 from app.ports import DataStorePort, ExchangeRatePort, UsageRepositoryPort
 
 logger = logging.getLogger(__name__)
@@ -49,6 +49,37 @@ class EvidenceOut(BaseModel):
 class GapOut(BaseModel):
     topic: str
     missing_data: str
+    # unpublished_data: public data not published (the UI suggests a right-of-petition draft);
+    # out_of_scope: personal data, opinions or unrelated topics; unverified: the model failed.
+    kind: Literal["unpublished_data", "out_of_scope", "unverified"] = "unpublished_data"
+
+
+class ChartSeriesOut(BaseModel):
+    name: str
+    values: list[float | None]
+
+
+class ChartKpiOut(BaseModel):
+    label: str
+    value: float | None
+    unit: Literal["COP", "percent", "count", "days", "unknown"]
+
+
+class ChartOut(BaseModel):
+    """Chart built by code from tool results (never by the LLM); backed by cited evidence."""
+
+    id: str
+    kind: Literal["bars", "grouped_bars", "line", "kpis"]
+    title: str
+    unit: Literal["COP", "percent", "count", "days", "unknown"]
+    evidence_id: str
+    evidence_ids: list[str]
+    categories: list[str] = []
+    series: list[ChartSeriesOut] = []
+    kpis: list[ChartKpiOut] = []
+    note: str | None = None
+    data_cutoff: str | None = None
+    verdict: Literal["coherent", "difference_detected", "not_comparable"] | None = None
 
 
 class UsageOut(BaseModel):
@@ -70,9 +101,13 @@ class ChatResponse(BaseModel):
     status: Literal["answered", "information_gap", "needs_clarification"]
     evidence: list[EvidenceOut]
     comparison: dict[str, Any] | None = None
-    gap: GapOut | None = None
+    gap: GapOut | None = None  # only for status information_gap
     disclaimer: str = DISCLAIMER
     usage: UsageOut | None = None
+    charts: list[ChartOut] = []
+    # Only for status answered: the answer gives related data but the specific data asked for
+    # is not published (kind is always unpublished_data; the UI suggests a petition draft).
+    partial_gap: GapOut | None = None
 
 
 def build_ask_question(
@@ -187,6 +222,19 @@ def _to_response(result: ChatAnswer, rate: ExchangeRate | None = None) -> ChatRe
         gap=GapOut(**vars(result.gap)) if result.gap else None,
         disclaimer=DISCLAIMER,
         usage=_usage_out(result.usage, rate) if result.usage else None,
+        charts=[_chart_out(chart) for chart in result.charts],
+        partial_gap=GapOut(**vars(result.partial_gap)) if result.partial_gap else None,
+    )
+
+
+def _chart_out(chart: ChartSpec) -> ChartOut:
+    return ChartOut(
+        id=chart.id, kind=chart.kind, title=chart.title, unit=chart.unit,
+        evidence_id=chart.evidence_id, evidence_ids=list(chart.evidence_ids),
+        categories=list(chart.categories),
+        series=[ChartSeriesOut(name=s.name, values=list(s.values)) for s in chart.series],
+        kpis=[ChartKpiOut(label=k.label, value=k.value, unit=k.unit) for k in chart.kpis],
+        note=chart.note, data_cutoff=chart.data_cutoff, verdict=chart.verdict,
     )
 
 

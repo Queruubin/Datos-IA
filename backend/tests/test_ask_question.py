@@ -192,3 +192,118 @@ def test_gap_repository_round_trip(tmp_path):
     repository.save(record)
 
     assert repository.list_gaps() == [record]
+
+
+# --- gap kind (right-of-petition suggestion only for unpublished data) ----------------------
+def test_unpublished_data_gap_is_logged_as_missing_data(tools):
+    llm = ScriptedLLM(
+        [[ToolCall("report_information_gap",
+                   {"topic": "seguridad", "missing_data": "hurtos por barrio"})]],
+        DraftAnswer("No hay datos de hurtos.", [], "information_gap",
+                    gap_kind="unpublished_data"),
+    )
+
+    result, gaps = ask(tools, llm)
+
+    assert result.gap.kind == "unpublished_data"
+    assert gaps.saved[0].reason == "model_reported"
+
+
+def test_gap_without_kind_defaults_to_unpublished_data(tools):
+    llm = ScriptedLLM([[]], DraftAnswer("No está publicado.", [], "information_gap",
+                                        gap_topic="salud", gap_missing_data="camas"))
+
+    result, _ = ask(tools, llm)
+
+    assert result.gap.kind == "unpublished_data"
+
+
+def test_out_of_scope_gap_is_logged_apart(tools):
+    llm = ScriptedLLM([[]], DraftAnswer(
+        "No doy nombres de funcionarios.", [], "information_gap",
+        gap_topic="funcionarios", gap_missing_data="nombre del alcalde", gap_kind="out_of_scope",
+    ))
+
+    result, gaps = ask(tools, llm, question="¿Cómo se llama el alcalde local?")
+
+    assert result.gap.kind == "out_of_scope"
+    [gap] = gaps.saved
+    assert gap.reason == "out_of_scope"  # not counted as missing published data
+
+
+@pytest.mark.parametrize("broken", ["invalid_output", "numbers_without_evidence"])
+def test_failed_or_rejected_answers_are_unverified_gaps(tools, broken):
+    if broken == "invalid_output":
+        class BrokenLLM(ScriptedLLM):
+            def compose_answer(self, question, results):
+                raise LLMOutputError("bad json")
+        llm = BrokenLLM([[BUDGET_CALL]], DraftAnswer("", [], "answered"))
+    else:
+        llm = ScriptedLLM([[BUDGET_CALL]], DraftAnswer("Se ejecutó el 99 %.", [], "answered",
+                                                       gap_kind="unpublished_data"))
+
+    result, _ = ask(tools, llm)
+
+    assert result.status == "information_gap"
+    assert result.gap.kind == "unverified"
+
+
+# --- partial answers (answered with related data; the data asked for is not published) -----
+def partial_draft(**overrides):
+    values = {"answer": "No está el número de huecos; la meta de malla vial tiene 60 % (E1).",
+              "cited_evidence_ids": ["E1"], "status": "answered", "gap_topic": "vías",
+              "gap_missing_data": "número de huecos tapados en 2025",
+              "gap_kind": "unpublished_data", **overrides}
+    return DraftAnswer(**values)
+
+
+def test_partial_answer_keeps_answer_and_logs_partial_gap(tools):
+    llm = ScriptedLLM([[BUDGET_CALL]], partial_draft())
+    question = "Soy juan.perez@mail.com: ¿cuántos huecos se taparon en 2025?"
+
+    result, gaps = ask(tools, llm, question=question)
+
+    assert result.status == "answered"
+    assert result.gap is None
+    assert [e.id for e in result.evidence] == ["E1"]
+    assert result.partial_gap.topic == "vías"
+    assert result.partial_gap.missing_data == "número de huecos tapados en 2025"
+    assert result.partial_gap.kind == "unpublished_data"
+    [gap] = gaps.saved
+    assert gap.reason == "partial_answer"
+    assert gap.missing_data == "número de huecos tapados en 2025"
+    assert "juan.perez" not in gap.question_masked
+
+
+def test_complete_answer_has_no_partial_gap(tools):
+    llm = ScriptedLLM([[BUDGET_CALL]], partial_draft(gap_topic=None, gap_missing_data=None,
+                                                     gap_kind=None))
+
+    result, gaps = ask(tools, llm)
+
+    assert result.partial_gap is None
+    assert gaps.saved == []
+
+
+def test_out_of_scope_partial_gap_is_ignored(tools):
+    llm = ScriptedLLM([[BUDGET_CALL]], partial_draft(gap_topic="funcionarios",
+                                                     gap_missing_data="nombre del contratista",
+                                                     gap_kind="out_of_scope"))
+
+    result, gaps = ask(tools, llm)
+
+    assert result.status == "answered"
+    assert result.partial_gap is None
+    assert gaps.saved == []
+
+
+def test_rejected_answer_never_produces_partial_gap(tools):
+    llm = ScriptedLLM([[BUDGET_CALL]], partial_draft(answer="Se taparon 300 huecos.",
+                                                     cited_evidence_ids=[]))
+
+    result, gaps = ask(tools, llm)
+
+    assert result.status == "information_gap"
+    assert result.partial_gap is None
+    assert result.gap.kind == "unverified"
+    assert [g.reason for g in gaps.saved] == ["numbers_without_evidence"]

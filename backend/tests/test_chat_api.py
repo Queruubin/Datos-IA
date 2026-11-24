@@ -107,3 +107,66 @@ def test_llm_failure_returns_502(tmp_path):
     client = TestClient(make_app(tmp_path, ask_question=FailingAgent()))
 
     assert client.post("/api/chat", json={"question": "hola"}).status_code == 502
+
+
+def test_chat_returns_charts_built_by_code(tmp_path):
+    llm = ScriptedLLM(
+        [[ToolCall("get_budget_execution", {"year": 2025})]],
+        DraftAnswer("Se ejecutó el 60 % (E1).", ["E1"], "answered"),
+    )
+    tools = AgentTools(build_fixture_db(tmp_path / "agent.duckdb"))
+    client = TestClient(make_app(tmp_path, ask_question=AskQuestion(llm, tools, InMemoryGaps())))
+
+    body = client.post("/api/chat", json={"question": "¿Cuánto se ejecutó?"}).json()
+
+    kpis, line = body["charts"]
+    assert kpis["id"] == "C1"
+    assert kpis["kind"] == "kpis"
+    assert kpis["evidence_id"] == "E1"
+    assert kpis["kpis"][2] == {"label": "Ejecutado sobre lo programado", "value": 60.0,
+                               "unit": "percent"}
+    assert line["kind"] == "line"
+    assert line["unit"] == "unknown"
+    assert line["series"][1] == {"name": "Ejecutado", "values": [150.0, 150.0]}
+    assert body["gap"] is None
+
+
+def test_chat_returns_gap_kind(tmp_path):
+    llm = ScriptedLLM([[]], DraftAnswer("No está publicado.", [], "information_gap",
+                                        gap_topic="vías", gap_missing_data="huecos por barrio",
+                                        gap_kind="unpublished_data"))
+    tools = AgentTools(build_fixture_db(tmp_path / "agent.duckdb"))
+    client = TestClient(make_app(tmp_path, ask_question=AskQuestion(llm, tools, InMemoryGaps())))
+
+    body = client.post("/api/chat", json={"question": "¿Cuántos huecos hay?"}).json()
+
+    assert body["gap"] == {"topic": "vías", "missing_data": "huecos por barrio",
+                           "kind": "unpublished_data"}
+    assert body["charts"] == []
+
+
+def test_chat_returns_partial_gap_for_answered_questions(tmp_path):
+    llm = ScriptedLLM(
+        [[ToolCall("get_budget_execution", {"year": 2025})]],
+        DraftAnswer("No está el número de huecos; la malla vial tiene 60 % (E1).", ["E1"],
+                    "answered", gap_topic="vías", gap_missing_data="huecos tapados en 2025",
+                    gap_kind="unpublished_data"),
+    )
+    tools = AgentTools(build_fixture_db(tmp_path / "agent.duckdb"))
+    client = TestClient(make_app(tmp_path, ask_question=AskQuestion(llm, tools, InMemoryGaps())))
+
+    body = client.post("/api/chat", json={"question": "¿Cuántos huecos se taparon?"}).json()
+
+    assert body["status"] == "answered"
+    assert body["gap"] is None
+    assert body["partial_gap"] == {"topic": "vías", "missing_data": "huecos tapados en 2025",
+                                   "kind": "unpublished_data"}
+    assert [e["id"] for e in body["evidence"]] == ["E1"]
+
+
+def test_chat_complete_answer_has_no_partial_gap(tmp_path):
+    client = TestClient(make_app(tmp_path, ask_question=agent(tmp_path)))
+
+    body = client.post("/api/chat", json={"question": "¿Cuánto se ejecutó?"}).json()
+
+    assert body["partial_gap"] is None

@@ -8,6 +8,11 @@ from app.domain.usage import LLMUsage, QuestionUsage
 
 AnswerStatus = Literal["answered", "information_gap", "needs_clarification"]
 Verdict = Literal["coherent", "difference_detected", "not_comparable"]
+# Why an answer is an information gap. The model picks the first two; "unverified" is set by
+# code when the model failed or its answer was rejected (no petition is suggested then).
+GapKind = Literal["unpublished_data", "out_of_scope", "unverified"]
+ChartKind = Literal["bars", "grouped_bars", "line", "kpis"]
+ChartUnit = Literal["COP", "percent", "count", "days", "unknown"]
 
 
 @dataclass(frozen=True)
@@ -76,12 +81,49 @@ class DraftAnswer:
     gap_topic: str | None = None
     gap_missing_data: str | None = None
     usage: LLMUsage | None = None  # tokens of the call that produced this draft
+    gap_kind: GapKind | None = None
 
 
 @dataclass(frozen=True)
 class GapInfo:
     topic: str
     missing_data: str
+    kind: GapKind = "unpublished_data"
+
+
+@dataclass(frozen=True)
+class ChartSeries:
+    name: str
+    values: tuple[float | None, ...]
+
+
+@dataclass(frozen=True)
+class ChartKpi:
+    label: str
+    value: float | None
+    unit: ChartUnit
+
+
+@dataclass(frozen=True)
+class ChartSpec:
+    """A chart built by code from one tool outcome; never by the LLM.
+
+    Every number comes from the tool data. `evidence_ids` are all the evidence records that
+    back the chart (all must be cited by the answer); `evidence_id` is the main one (badge).
+    """
+
+    id: str
+    kind: ChartKind
+    title: str
+    unit: ChartUnit
+    evidence_id: str
+    evidence_ids: tuple[str, ...]
+    categories: tuple[str, ...] = ()
+    series: tuple[ChartSeries, ...] = ()
+    kpis: tuple[ChartKpi, ...] = ()
+    note: str | None = None
+    data_cutoff: str | None = None
+    verdict: Verdict | None = None
 
 
 @dataclass(frozen=True)
@@ -92,8 +134,12 @@ class ChatAnswer:
     status: AnswerStatus
     evidence: list[Evidence]
     comparison: dict[str, Any] | None = None
-    gap: GapInfo | None = None
+    gap: GapInfo | None = None  # only for status information_gap
     usage: QuestionUsage | None = None
+    charts: tuple[ChartSpec, ...] = ()
+    # Only for status answered: the answer gives related data but not the one asked for, which
+    # is public and unpublished (kind is always "unpublished_data").
+    partial_gap: GapInfo | None = None
 
 
 @dataclass(frozen=True)

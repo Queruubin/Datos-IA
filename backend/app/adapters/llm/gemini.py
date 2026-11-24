@@ -81,8 +81,25 @@ class FinalAnswerSchema(BaseModel):
     answer: str = Field(description="Respuesta en español claro para el ciudadano.")
     cited_evidence_ids: list[str] = Field(description="Ids de evidencia usados, p. ej. ['E1'].")
     status: Literal["answered", "information_gap", "needs_clarification"]
-    gap_topic: str = Field(default="", description="Tema del vacío de información, si aplica.")
-    gap_missing_data: str = Field(default="", description="Dato que haría falta, si aplica.")
+    gap_topic: str = Field(
+        default="",
+        description="Tema del vacío de información. Con status information_gap, o con status "
+                    "answered cuando la respuesta es parcial (el dato pedido no está y solo das "
+                    "datos relacionados). Vacío si la respuesta cubre lo preguntado.",
+    )
+    gap_missing_data: str = Field(
+        default="",
+        description="Dato concreto que pidió la persona y no está en las fuentes. Con status "
+                    "information_gap, o con status answered si la respuesta es parcial. Vacío "
+                    "si la respuesta cubre lo preguntado.",
+    )
+    gap_kind: Literal["unpublished_data", "out_of_scope"] = Field(
+        default="unpublished_data",
+        description="Solo si hay vacío (information_gap o respuesta parcial): 'unpublished_data' "
+                    "si el dato es de la gestión pública local pero no está publicado; "
+                    "'out_of_scope' si la pregunta pide datos personales o nombres, opiniones, o "
+                    "temas ajenos a la gestión pública de San Cristóbal.",
+    )
 
 
 class GeminiLLM:
@@ -154,7 +171,21 @@ class GeminiLLM:
             gap_topic=parsed.gap_topic or None,
             gap_missing_data=parsed.gap_missing_data or None,
             usage=usage,
+            gap_kind=_gap_kind(parsed),
         )
+
+
+def _gap_kind(parsed: FinalAnswerSchema) -> Literal["unpublished_data", "out_of_scope"] | None:
+    """Kind of a full gap, or of a partial answer (answered, but the data asked for is missing).
+
+    An answered draft only carries a kind when the model named the missing data: the default
+    value of the field alone never turns a complete answer into a partial one.
+    """
+    if parsed.status == "information_gap":
+        return parsed.gap_kind
+    if parsed.status == "answered" and parsed.gap_missing_data.strip():
+        return parsed.gap_kind
+    return None
 
 
 class GeminiPlanningSession:

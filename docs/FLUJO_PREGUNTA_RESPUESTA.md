@@ -60,9 +60,10 @@ sequenceDiagram
         A->>R: Guarda el vacío (pregunta enmascarada)
     else Respuesta válida
         V-->>A: Aprobada
+        A->>A: Construye hasta 2 gráficos con los datos de las herramientas citadas
     end
-    A-->>F: Respuesta + evidencia + veredicto o vacío
-    F-->>P: Muestra tarjetas, enlaces y fecha de corte
+    A-->>F: Respuesta + evidencia + gráficos + veredicto o vacío (con su tipo)
+    F-->>P: Muestra gráficos, tarjetas, enlaces, fecha de corte y, si falta un dato publicado, el borrador de derecho de petición
 ```
 
 ## Paso a paso
@@ -144,9 +145,18 @@ En una llamada aparte, sin herramientas, Gemini recibe los resultados y escribe 
   "cited_evidence_ids": ["E1", "E2"],
   "status": "answered | information_gap | needs_clarification",
   "gap_topic": "",
-  "gap_missing_data": ""
+  "gap_missing_data": "",
+  "gap_kind": "unpublished_data | out_of_scope"
 }
 ```
+
+`gap_kind` solo importa cuando hay un vacío (estado `information_gap` o respuesta parcial):
+- `unpublished_data`: el dato es de la gestión pública de San Cristóbal pero no está publicado.
+- `out_of_scope`: la pregunta pide nombres de funcionarios u otros datos personales, opiniones, o trata un tema ajeno a la gestión pública local.
+
+Si Gemini no lo envía, se asume `unpublished_data`. Gemini **no** produce gráficos ni elige sus cifras.
+
+**Respuesta parcial.** Si el estado es `answered` pero el dato concreto que se preguntó no está en las fuentes (la respuesta solo da datos relacionados), Gemini mantiene `answered` y llena también `gap_topic`, `gap_missing_data` y `gap_kind`. Ejemplo: *"¿Cuántos huecos se taparon en 2025?"* solo tiene el presupuesto y los compromisos de la meta de malla vial. Si la respuesta cubre la pregunta, esos campos quedan vacíos. La API lo expone en `partial_gap` (`topic`, `missing_data`, `kind`), separado de `gap`, que sigue siendo solo para `information_gap`; solo se propagan los parciales `unpublished_data`.
 
 Si el JSON llega mal formado, la respuesta se convierte en un vacío de información en lugar de un error.
 
@@ -160,23 +170,57 @@ Es una función de Python determinística: Gemini no puede influir en ella.
 
 **Archivo:** `backend/app/application/answer_validator.py`
 
-### 8. Registro de vacíos de información
-Si la respuesta final es un vacío, porque Gemini lo reportó o porque el validador la rechazó, se guarda en `gap_log`: fecha, **pregunta enmascarada**, tema, dato faltante y motivo. No se guarda la IP ni datos personales.
+### 8. Gráficos construidos por código
+Solo si la respuesta quedó como `answered`, el código (`backend/app/application/charts.py`) convierte los resultados de las herramientas en gráficos. **Gemini nunca construye un gráfico ni elige sus números**: cada valor se copia del resultado de la herramienta.
+
+Reglas:
+- Un gráfico solo se muestra si **todas** sus evidencias (`evidence_ids`) están citadas en la respuesta validada. Así el gráfico respalda lo que dice el texto.
+- Máximo **2 gráficos** por respuesta. Si se usaron varias herramientas, se toma primero el gráfico principal de cada una.
+- Barras y líneas necesitan al menos 2 categorías (una sola barra se muestra como indicador). No hay gráficos para vacíos, aclaraciones ni respuestas rechazadas.
+
+| Herramienta | Gráficos |
+|---|---|
+| `get_plan_vs_execution` | Indicadores del PMR (presupuesto programado, % comprometido, % girado, compromisos, giros) y barras agrupadas POAI vs compromisos vs giros por grupo (hasta 8) |
+| `get_budget_execution` | Indicadores del PAC y línea mensual programado vs ejecutado, con unidad **no documentada** |
+| `get_pqrs_stats` | Indicadores (PQRS, mediana de días, % cerradas) y barras del top de grupos |
+| `get_participatory_budget` | Barras de propuestas por estado e indicadores de CRP |
+| `get_investment_by_ods` | Barras del valor POAI por ODS |
+| `get_changes_between_cutoffs` | Barras agrupadas antes/después por corte (PMR o estados de propuestas) |
+| `compare_poai_vs_pmr`, `compare_participatory_budget_vs_commitments` | Indicadores con el veredicto calculado por código |
+| `get_goal_detail` | Indicadores del PMR de la meta y barras del POAI por año |
+
+Contrato (`charts` en la respuesta de `/api/chat`): `id`, `kind` (`bars`, `grouped_bars`, `line`, `kpis`), `title`, `unit` (`COP`, `percent`, `count`, `days`, `unknown`), `evidence_id` (principal), `evidence_ids`, `categories`, `series` (`name`, `values`), `kpis` (`label`, `value`, `unit`), `note`, `data_cutoff` y `verdict`.
+
+### 9. Registro de vacíos de información
+Si la respuesta final es un vacío, se guarda en `gap_log`: fecha, **pregunta enmascarada**, tema, dato faltante y motivo. No se guarda la IP ni datos personales. El motivo distingue los casos:
+
+| Motivo | Cuándo | Tipo en la respuesta |
+|---|---|---|
+| `model_reported` | Gemini reportó que el dato no está publicado | `unpublished_data` |
+| `out_of_scope` | Datos personales, opiniones o temas ajenos | `out_of_scope` |
+| `numbers_without_evidence`, `invalid_model_output` | El validador rechazó la respuesta o Gemini falló | `unverified` |
+| `partial_answer` | Respuesta `answered` con datos relacionados, pero sin el dato pedido | `partial_gap` (`unpublished_data`) |
+
+`model_reported` (vacío total) y `partial_answer` (vacío parcial) cuentan como **dato que falta publicar**; el panel puede distinguirlos por el motivo. Una respuesta rechazada por el validador nunca se registra como `partial_answer`. Los `out_of_scope` se guardan aparte (con su motivo) para saber qué se pregunta fuera de alcance sin mezclarlo con los datos faltantes.
 
 Este registro alimentará el futuro panel de la Alcaldía: *qué pregunta la ciudadanía que todavía no se puede responder con datos.*
 
 **Archivo:** `backend/app/adapters/duckdb/gap_repository.py`
 
-### 9. La persona ve la respuesta (frontend)
+### 10. La persona ve la respuesta (frontend)
 
 | Estado | Lo que se muestra |
 |---|---|
-| `answered` | Texto con las referencias `E1`, `E2` resaltadas; tarjetas de evidencia con la fuente, la fecha de corte y el enlace al portal; y, si hubo contraste, el veredicto con su regla |
-| `information_gap` | Tarjeta *"Este dato no está publicado"*, con el tema y el dato faltante |
+| `answered` | Gráficos **arriba del texto** (título, unidad, corte, enlace a su evidencia y botón *Ver datos* con la tabla); texto con las referencias `E1`, `E2` resaltadas; tarjetas de evidencia; y, si hubo contraste, el veredicto con su regla |
+| `answered` + `partial_gap` | Lo mismo que `answered` y, después de la evidencia, la nota *"La respuesta no incluye: …"* con la misma sugerencia de derecho de petición |
+| `information_gap` + `unpublished_data` | Tarjeta *"Este dato no está publicado"* y la sugerencia *"¿Quieres pedir este dato a la Alcaldía?"* con un borrador editable de derecho de petición |
+| `information_gap` + `out_of_scope` o `unverified` | Tarjeta explicativa, sin borrador de petición |
 | `needs_clarification` | Mensaje pidiendo aclarar la pregunta |
 | Error | Mensaje claro según el código (429, 502, 503 o sin conexión), con botón para reintentar |
 
 Siempre está visible el aviso: *"Este asistente no es vocero oficial de la Alcaldía…"*
+
+**Derecho de petición.** El borrador sale de una **plantilla fija** (`frontend/src/lib/petition.ts`), sin IA y sin cifras: va dirigido a la Alcaldía Local de San Cristóbal, invoca el artículo 23 de la Constitución Política y la Ley 1755 de 2015, pide el dato faltante (`gap.missing_data` o `partial_gap.missing_data`) y su publicación como datos abiertos, y deja marcadores para que la persona complete `[Nombre completo]`, `[Documento de identidad]` y `[Correo o dirección para respuesta]`. Nunca se llenan datos personales. La persona puede copiarlo y radicarlo en *Bogotá Te Escucha* (`https://bogota.gov.co/sdqs/`); **nada se envía automáticamente**.
 
 ## Ejemplo real
 
@@ -200,7 +244,7 @@ Pregunta: **"¿Coincide lo planeado en el POAI con el seguimiento de metas en 20
 Pregunta: **"¿Cuántos homicidios hubo en San Cristóbal el año pasado?"**
 
 1. Ninguna herramienta tiene ese dato; Gemini usa `report_information_gap`.
-2. La persona ve *"Este dato no está publicado"* (tema: seguridad).
+2. La persona ve *"Este dato no está publicado"* (tema: seguridad) y la sugerencia de pedirlo con un derecho de petición.
 3. El vacío queda registrado para la Alcaldía.
 
 ## Defensas del sistema
@@ -208,6 +252,7 @@ Pregunta: **"¿Cuántos homicidios hubo en San Cristóbal el año pasado?"**
 | Riesgo | Defensa | Capa |
 |---|---|---|
 | El modelo inventa cifras | Herramientas cerradas + evidencia generada por el código + validador | Código |
+| Un gráfico muestra algo que el texto no respalda | Los gráficos los arma el código con los datos de las herramientas, solo con evidencia citada | Código |
 | Prompt injection ("ignora tus instrucciones…") | Pregunta encerrada como datos, regla 11 del prompt y herramientas sin SQL libre | Prompt + código |
 | Exposición de datos personales | Enmascarado antes de Gemini y de los registros; nombres de funcionarios (`usuario_actual`) excluidos de todas las herramientas, con una prueba automática | Código |
 | Datos curados inconsistentes | La ingesta compara cada conteo y total con los `manifest.json` y no carga nada si no coinciden | Datos |

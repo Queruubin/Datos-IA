@@ -1046,10 +1046,14 @@ class AgentTools:
         locator = f"{PQRS_VIEW} · " + _filters(
             year=params.year, topic_keyword=params.topic_keyword, group_by=params.group_by
         )
-        summary = (
-            f"{len(rows)} PQRS; mediana {data['total']['median_response_days']} días; "
-            f"{data['total']['pct_closed']}% cerradas."
-        )
+        median = data["total"]["median_response_days"]
+        closed = data["total"]["pct_closed"]
+        parts = [f"{len(rows)} PQRS"]
+        if median is not None:
+            parts.append(f"mediana {median} días")
+        if closed is not None:
+            parts.append(f"{closed}% cerradas")
+        summary = "; ".join(parts) + "."  # never 'None días' when the filter leaves no data
         return data, [ledger.add(self._sources().get("PQRS"), PQRS_VIEW, locator, summary)]
 
     def _participatory_budget(self, params: ParticipatoryParams, ledger: EvidenceLedger):

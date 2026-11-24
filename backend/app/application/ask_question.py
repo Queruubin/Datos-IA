@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 
 from app.application.agent_tools import COMPARISON_TOOLS, AgentTools, EvidenceLedger
 from app.application.answer_validator import UNVERIFIED_ANSWER, validate_answer
+from app.application.charts import build_charts
 from app.application.pricing import cost_usd
 from app.application.privacy import mask_pii
 from app.domain import (
@@ -28,6 +29,10 @@ logger = logging.getLogger(__name__)
 MAX_ROUNDS = 5
 MAX_CALLS_PER_ROUND = 6
 GAP_TOOL = "report_information_gap"
+# Gaps caused by the model failing or by a rejected answer: the data may well be published.
+UNVERIFIED_REASONS = frozenset({"invalid_model_output", "numbers_without_evidence"})
+# Answered with related data, but the specific data asked for is not published.
+PARTIAL_REASON = "partial_answer"
 
 
 class AskQuestion:
@@ -83,20 +88,34 @@ class AskQuestion:
 
         gap = None
         if final.status == "information_gap":
+            if reason in UNVERIFIED_REASONS:
+                kind = "unverified"
+            else:
+                kind = final.gap_kind or "unpublished_data"
+                if kind == "out_of_scope":
+                    reason = "out_of_scope"  # kept apart from data that is missing
             gap = GapInfo(
                 topic=final.gap_topic or (reported.topic if reported else "sin clasificar"),
                 missing_data=final.gap_missing_data
                 or (reported.missing_data if reported else "No especificado"),
+                kind=kind,
             )
             self._record_gap(masked, gap, reason)
 
-        comparison = _last_comparison(outcomes) if final.status == "answered" else None
+        answered = final.status == "answered"
+        partial_gap = _partial_gap(final) if answered else None
+        if partial_gap is not None:
+            self._record_gap(masked, partial_gap, PARTIAL_REASON)
+
         return ChatAnswer(
             answer=final.answer,
             status=final.status,
             evidence=result.evidence,
-            comparison=comparison,
+            comparison=_last_comparison(outcomes) if answered else None,
             gap=gap,
+            # Built by code from the tool results, only from evidence the answer cites.
+            charts=build_charts(outcomes, final.cited_evidence_ids) if answered else (),
+            partial_gap=partial_gap,
         )
 
     def _collect(
@@ -170,6 +189,16 @@ def _reported_gap(outcomes: list[ToolOutcome]) -> GapInfo | None:
         if outcome.call.name == GAP_TOOL and not outcome.error:
             return GapInfo(outcome.data["topic"], outcome.data["missing_data"])
     return None
+
+
+def _partial_gap(draft: DraftAnswer) -> GapInfo | None:
+    """Missing data the model flagged on an answered draft. Only public, unpublished data counts:
+    out-of-scope leftovers (names, opinions) are not something to request from the Alcaldía."""
+    missing = (draft.gap_missing_data or "").strip()
+    if draft.gap_kind != "unpublished_data" or not missing:
+        return None
+    topic = (draft.gap_topic or "").strip() or "sin clasificar"
+    return GapInfo(topic=topic, missing_data=missing, kind="unpublished_data")
 
 
 def _has_verdict(outcome: ToolOutcome) -> bool:

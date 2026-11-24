@@ -1,7 +1,7 @@
 """Deterministic checks applied to the LLM's final answer (PRD RF1 and RF3)."""
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from app.domain import DraftAnswer, Evidence
 
@@ -38,11 +38,5 @@ def validate_answer(draft: DraftAnswer, collected: list[Evidence]) -> Validation
         )
         return ValidationResult(safe, [], rejected_reason="numbers_without_evidence")
 
-    clean = DraftAnswer(
-        answer=draft.answer,
-        cited_evidence_ids=[item.id for item in cited],
-        status=draft.status,
-        gap_topic=draft.gap_topic,
-        gap_missing_data=draft.gap_missing_data,
-    )
+    clean = replace(draft, cited_evidence_ids=[item.id for item in cited], usage=None)
     return ValidationResult(clean, cited)

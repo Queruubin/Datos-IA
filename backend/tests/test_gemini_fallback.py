@@ -55,3 +55,54 @@ def test_error_is_raised_when_every_model_is_overloaded():
     client = FakeClient({"primary": 503, "lite": 503})
     with pytest.raises(errors.ServerError):
         ModelSelector(client, ["primary", "lite"]).generate("q", CONFIG)
+
+
+class _JsonResponse:
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.usage_metadata = None
+
+
+class _JsonModels:
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+    def generate_content(self, model, contents, config):
+        return _JsonResponse(self.text)
+
+
+def _compose(text: str):
+    from app.adapters.llm.gemini import GeminiLLM
+
+    client = type("Client", (), {"models": _JsonModels(text)})()
+    llm = GeminiLLM(api_key="k", model="m", system_instruction="s", client=client)
+    return llm.compose_answer("pregunta", [])
+
+
+def test_final_answer_carries_gap_kind_only_for_gaps():
+    gap = _compose('{"answer": "No doy nombres.", "cited_evidence_ids": [], '
+                   '"status": "information_gap", "gap_kind": "out_of_scope"}')
+    answered = _compose('{"answer": "Hola", "cited_evidence_ids": [], "status": "answered", '
+                        '"gap_kind": "out_of_scope"}')
+    default = _compose('{"answer": "No está.", "cited_evidence_ids": [], '
+                       '"status": "information_gap"}')
+
+    assert gap.gap_kind == "out_of_scope"
+    assert answered.gap_kind is None
+    assert default.gap_kind == "unpublished_data"
+
+
+def test_answered_draft_carries_partial_gap_when_missing_data_is_named():
+    partial = _compose('{"answer": "Solo hay presupuesto de malla vial (E1).", '
+                       '"cited_evidence_ids": ["E1"], "status": "answered", "gap_topic": "vías", '
+                       '"gap_missing_data": "huecos tapados en 2025", '
+                       '"gap_kind": "unpublished_data"}')
+    complete = _compose('{"answer": "Se ejecutó el 60 % (E1).", "cited_evidence_ids": ["E1"], '
+                        '"status": "answered"}')
+
+    assert partial.status == "answered"
+    assert partial.gap_topic == "vías"
+    assert partial.gap_missing_data == "huecos tapados en 2025"
+    assert partial.gap_kind == "unpublished_data"
+    assert complete.gap_missing_data is None
+    assert complete.gap_kind is None  # the field default alone never makes a partial answer

@@ -54,6 +54,14 @@ def test_evidence_ids_are_assigned_by_code_and_unique(tools):
 
 
 # --- PQRS (curated) --------------------------------------------------------------------------
+def test_pqrs_summary_never_prints_none(tools):
+    # Regression: a filter with no matching rows produced "None días; None% cerradas".
+    outcome = run(tools, "get_pqrs_stats", year=2025, topic_keyword="no-existe-este-tema")
+
+    for evidence in outcome.evidence:
+        assert "None" not in evidence.summary
+
+
 def test_pqrs_stats_grouped_by_subtema(tools):
     outcome = run(tools, "get_pqrs_stats", year=2025, group_by="subtema")
 
