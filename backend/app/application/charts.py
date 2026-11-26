@@ -39,6 +39,13 @@ PQRS_GROUP_LABELS = {
     "observacion_general": "estado de la respuesta",
 }
 PLAN_GROUP_LABELS = {"sector": "sector", "proyecto": "proyecto", "meta": "meta"}
+CONTRACT_GROUP_LABELS = {"proyecto": "proyecto", "meta": "meta", "estado": "estado",
+                         "vigencia": "vigencia"}
+CONTRACT_VALUE_NOTE = "Valor firmado de los contratos (SECOP II): no es lo ejecutado ni lo pagado."
+CONTRACT_OVERLAP_NOTE = (
+    "Un contrato vinculado a varios proyectos o metas aparece en cada uno: las barras se solapan "
+    "y no se deben sumar."
+)
 
 Builder = Callable[[dict[str, Any], list[Evidence]], list[ChartSpec]]
 
@@ -184,6 +191,8 @@ def _pqrs_stats(data: dict[str, Any], evidence: list[Evidence]) -> list[ChartSpe
 
 
 def _participatory_budget(data: dict[str, Any], evidence: list[Evidence]) -> list[ChartSpec]:
+    if "matches" in data:  # a single proposal's detail: the answer text says it better
+        return []
     pp_ev, crp_ev = evidence[0], evidence[1]
     by_status = _top_items(data.get("by_status") or {})
     commitments = data.get("commitments") or {}
@@ -316,6 +325,44 @@ def _goal_detail(data: dict[str, Any], evidence: list[Evidence]) -> list[ChartSp
     return charts
 
 
+def _contracts(data: dict[str, Any], evidence: list[Evidence]) -> list[ChartSpec]:
+    if not data.get("contracts"):
+        return []
+    [ev] = evidence[:1]
+    verification = data.get("verification") or {}
+    level = "la meta" if verification.get("level") == "meta" else "el proyecto"
+    charts = [_chart(
+        "kpis", "Contratos SECOP II", "COP", [ev],
+        kpis=(
+            ChartKpi("Contratos", _num(data.get("contracts")), "count"),
+            ChartKpi("Valor contratado", _num(data.get("total_value")), "COP"),
+            ChartKpi("Con vínculo verificado", _num(verification.get("pct_verified")),
+                     "percent"),
+        ),
+        note=_join(CONTRACT_VALUE_NOTE,
+                   f"Verificado = vínculo con {level} confirmado; el resto está pendiente de "
+                   "verificación."),
+    )]
+    group_by = data.get("group_by", "proyecto")
+    groups = list(data.get("groups") or [])
+    if group_by == "vigencia":
+        groups.sort(key=lambda group: str(group.get("nombre")))
+    shown = groups[:MAX_CATEGORIES]
+    charts.append(_chart(
+        "bars", f"Valor contratado por {CONTRACT_GROUP_LABELS.get(group_by, group_by)}", "COP",
+        [ev],
+        categories=tuple(_contract_label(group) for group in shown),
+        series=(ChartSeries("Valor contratado",
+                            tuple(_num(g.get("valor_contratado")) for g in shown)),),
+        note=_join(
+            CONTRACT_VALUE_NOTE,
+            CONTRACT_OVERLAP_NOTE if group_by in ("proyecto", "meta") else None,
+            _top_note(len(shown), data.get("groups_total", len(groups)), "mayor valor"),
+        ),
+    ))
+    return charts
+
+
 BUILDERS: dict[str, Builder] = {
     "get_plan_vs_execution": _plan_vs_execution,
     "get_budget_execution": _budget_execution,
@@ -326,6 +373,7 @@ BUILDERS: dict[str, Builder] = {
     "compare_poai_vs_pmr": _poai_vs_pmr,
     "compare_participatory_budget_vs_commitments": _contrast,
     "get_goal_detail": _goal_detail,
+    "get_contracts": _contracts,
 }
 
 
@@ -397,6 +445,12 @@ def _plan_label(group: dict[str, Any], group_by: str) -> str:
     if group_by == "proyecto":
         return _short(f"{group.get('codigo_proyecto')} · {group.get('nombre_proyecto')}")
     return _short(group.get("nombre_sector") or "Sin sector")
+
+
+def _contract_label(group: dict[str, Any]) -> str:
+    if group.get("codigo"):
+        return _short(f"{group['codigo']} · {group.get('nombre') or ''}")
+    return _short(group.get("nombre") or "Sin dato")
 
 
 def _ods_label(group: dict[str, Any]) -> str:

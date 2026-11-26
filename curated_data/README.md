@@ -14,6 +14,7 @@ Los archivos se versionan tal cual se entregaron (`.gitattributes` evita que Git
 | `Carga_CRP_SC/` | Compromisos presupuestales (CRP) por meta y propuestas financiadas (vigencia 2025) | Conjunto de presupuesto comprometido de Presupuestos Participativos |
 | `Carga_ODS_SC/` | Alineación de cada meta con una meta de los Objetivos de Desarrollo Sostenible | Archivo plano ODS (corte 30-06-2026) |
 | `Carga_PQRS_SC/` | 4.026 PQRS de la Alcaldía Local, 2022–2026, con sus catálogos | Archivo PQRS de la Secretaría Distrital de Gobierno |
+| `Carga_Contratos_SC/` | 1.936 contratos SECOP II 2025–2026 con 3.853 vínculos a proyectos, metas y CRP (verificados o pendientes). La columna `Contratista` no se carga | Consulta SECOP II consolidada por el equipo (sin scripts SQL) |
 
 Cada carpeta tiene:
 

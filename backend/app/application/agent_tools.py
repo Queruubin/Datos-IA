@@ -6,10 +6,12 @@ Every figure the agent can mention comes from these functions, together with evi
 whose ids are assigned by code (E1, E2...), never by the model.
 
 Sources: the curated relational package (POAI, PMR, Presupuestos Participativos, CRP, ODS,
-PQRS; see `app.ingestion.curated`) and the PAC execution of the open-data portal (F1).
+PQRS, SECOP II contracts; see `app.ingestion.curated`) and the PAC execution of the open-data
+portal (F1).
 
 Privacy: `pqrs.usuario_actual` (names of public officials) is never read: tools only use the
-`vw_pqrs_detalle` view, which leaves it out, and `_read` drops it defensively anyway.
+`vw_pqrs_detalle` view, which leaves it out, and `_read` drops it defensively anyway. Contractor
+names are never loaded into the database (see `curated.CONTRACT_COLUMNS`).
 """
 
 import logging
@@ -22,7 +24,12 @@ import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from app.domain import Evidence, SourceMetadata, ToolCall, ToolOutcome, ToolSpec
-from app.ingestion.curated import PMR_2025_ROUNDING_COP, PMR_CHANGE_COLUMNS, pmr_changes
+from app.ingestion.curated import (
+    LINK_VERIFIED,
+    PMR_2025_ROUNDING_COP,
+    PMR_CHANGE_COLUMNS,
+    pmr_changes,
+)
 from app.ingestion.text import normalize_label
 from app.ports import AnalyticsPort
 
@@ -42,9 +49,12 @@ CRP_TABLE = "crp"
 CRP_LINES_TABLE = "crp_meta"
 CRP_PROPOSAL_TABLE = "crp_propuesta"
 PQRS_VIEW = "vw_pqrs_detalle"
+CONTRACT_TABLE = "contrato"
+CONTRACT_LINK_TABLE = "contrato_vinculo"
 
-# Columns that must never leave the database through a tool.
-PRIVATE_COLUMNS = frozenset({"usuario_actual"})
+# Columns that must never leave the database through a tool (`contratista` is never loaded;
+# listed defensively).
+PRIVATE_COLUMNS = frozenset({"usuario_actual", "contratista"})
 
 PAC_UNIT_NOTE = (
     "Unidad no documentada por la fuente (probablemente millones de pesos). "
@@ -57,6 +67,7 @@ PQRS_CLOSED_STATE = "TRAMITE CERRADO"
 FUNDED_STATES = ("CONTRATADA", "EN EJECUCION", "MATERIALIZADA")
 TOP_N = 10
 MAX_SAMPLES = 10
+MAX_DETAILS = 5  # proposals shown in full when a name search matches several
 MAX_GROUPS = 15
 MAX_DIFFERENCES = 15
 
@@ -94,6 +105,7 @@ class ParticipatoryParams(_Params):
     year: Year = Field(default=None, ge=2000, le=2100)
     sector_keyword: Keyword = Field(default=None, max_length=60)
     status: str | None = Field(default=None, max_length=40)
+    proposal: Keyword = Field(default=None, min_length=3, max_length=80)
 
 
 class ContrastParams(_Params):
@@ -135,6 +147,19 @@ class ChangesParams(_Params):
 class OdsParams(_Params):
     year: Year = Field(default=None, ge=2000, le=2100)
     ods_keyword: Keyword = Field(default=None, max_length=60)
+
+
+ContractGroup = Literal["proyecto", "meta", "estado", "vigencia"]
+
+
+class ContractParams(_Params):
+    year: Year = Field(default=None, ge=2000, le=2100)
+    project_code: ProjectCode = Field(default=None, pattern=r"^\d{3,6}$")
+    meta_code: str | None = Field(default=None, pattern=r"^\d{3,10}$")
+    object_keyword: Keyword = Field(default=None, min_length=3, max_length=80)
+    status: str | None = Field(default=None, max_length=40)
+    group_by: ContractGroup = "proyecto"
+    verified_only: bool = False
 
 
 class GapParams(_Params):
@@ -289,7 +314,8 @@ TOOL_SPECS: list[ToolSpec] = [
         description=(
             "Presupuestos participativos de San Cristóbal (último corte): propuestas "
             "ciudadanas por estado y metodología, población beneficiada reportada, ejemplos y "
-            "valor comprometido en CRP (pesos)."
+            "valor comprometido en CRP (pesos). Con 'proposal' sigue una propuesta puntual "
+            "(por nombre o código): estado en cada corte, avance y CRP asociados."
         ),
         parameters_json_schema={
             "type": "object",
@@ -299,6 +325,14 @@ TOOL_SPECS: list[ToolSpec] = [
                 "sector_keyword": _SECTOR_SCHEMA,
                 "status": {"type": "string",
                            "description": "Estado de la propuesta, p. ej. 'Materializada'."},
+                "proposal": {
+                    "type": "string",
+                    "description": (
+                        "Nombre (o parte del nombre) o código de una propuesta ciudadana, "
+                        "p. ej. 'Internet a mi barrio' o '41411'. Úsalo cuando la pregunta "
+                        "nombra una iniciativa concreta; no lo pongas en sector_keyword."
+                    ),
+                },
             },
         },
     ),
@@ -318,6 +352,46 @@ TOOL_SPECS: list[ToolSpec] = [
         },
     ),
     ToolSpec(
+        name="get_contracts",
+        description=(
+            "Contratos de la Alcaldía Local de San Cristóbal en SECOP II (vigencias 2025 y "
+            "2026) y su vínculo con proyectos y metas del plan local: cantidad de contratos, "
+            "valor contratado (valor firmado, contado una vez por contrato; NO es lo ejecutado "
+            "ni lo pagado), cuántos tienen el vínculo verificado o pendiente de verificación, "
+            "agrupación por proyecto, meta, estado o vigencia, y ejemplos con enlace público. "
+            "Úsala para preguntas sobre contratación o contratos, p. ej. '¿qué contratos tiene "
+            "el proyecto 2251?' (project_code='2251') o 'contratos de la meta 22511' "
+            "(meta_code='22511'). No devuelve nombres de contratistas."
+        ),
+        parameters_json_schema={
+            "type": "object",
+            "properties": {
+                "year": {"type": "integer",
+                         "description": "Vigencia del contrato (2025 o 2026). Omitir = todas."},
+                "project_code": {"type": "string",
+                                 "description": "Código del proyecto (3 a 6 dígitos, p. ej. "
+                                                "'2251')."},
+                "meta_code": {"type": "string",
+                              "description": "Código de meta extendido, solo dígitos (p. ej. "
+                                             "'22511')."},
+                "object_keyword": {
+                    "type": "string",
+                    "description": "Palabra del objeto del contrato, p. ej. 'malla vial'.",
+                },
+                "status": {"type": "string",
+                           "description": "Estado del contrato, p. ej. 'En ejecución', "
+                                          "'Cerrado', 'Modificado'."},
+                "group_by": {"type": "string", "enum": ["proyecto", "meta", "estado",
+                                                        "vigencia"]},
+                "verified_only": {
+                    "type": "boolean",
+                    "description": "true = solo vínculos verificados con el proyecto (o con la "
+                                   "meta si se da meta_code). Por defecto false.",
+                },
+            },
+        },
+    ),
+    ToolSpec(
         name="report_information_gap",
         description=(
             "Úsala cuando ninguna otra herramienta puede responder la pregunta: registra el "
@@ -327,7 +401,7 @@ TOOL_SPECS: list[ToolSpec] = [
             "type": "object",
             "properties": {
                 "topic": {"type": "string",
-                          "description": "Tema, p. ej. seguridad, vías, salud, contratación."},
+                          "description": "Tema, p. ej. seguridad, vías, salud, empleo."},
                 "missing_data": {"type": "string", "description": "Dato que haría falta."},
             },
             "required": ["topic", "missing_data"],
@@ -388,6 +462,7 @@ class AgentTools:
             "get_pqrs_stats": (PqrsParams, self._pqrs_stats),
             "get_participatory_budget": (ParticipatoryParams, self._participatory_budget),
             "compare_participatory_budget_vs_commitments": (ContrastParams, self._contrast),
+            "get_contracts": (ContractParams, self._contracts),
             "report_information_gap": (GapParams, self._report_gap),
         }
 
@@ -1057,6 +1132,8 @@ class AgentTools:
         return data, [ledger.add(self._sources().get("PQRS"), PQRS_VIEW, locator, summary)]
 
     def _participatory_budget(self, params: ParticipatoryParams, ledger: EvidenceLedger):
+        if params.proposal:
+            return self._proposal_detail(params, ledger)
         proposals, cut = self._latest_proposals(params.year, params.sector_keyword)
         if params.status:
             states = proposals["estado_propuesta"].map(_label)
@@ -1106,6 +1183,113 @@ class AgentTools:
                 f"{_cop(committed)}.",
             ),
         ]
+        return data, evidence
+
+    def _proposal_detail(self, params: ParticipatoryParams, ledger: EvidenceLedger):
+        """One citizen proposal by code or name: state per cut-off, progress and its CRP.
+
+        Never returns 'tipo_acuerdo': in the source it sometimes holds a person's name.
+        """
+        proposals, cut = self._latest_proposals(params.year, params.sector_keyword)
+        query = params.proposal or ""
+        matches = _match_proposals(proposals, query)
+        search = _filters(proposal=query, year=params.year, sector_keyword=params.sector_keyword)
+        if matches.empty:
+            raise _NoData({
+                "found": 0,
+                "message": f"No hay ninguna propuesta de presupuestos participativos de San "
+                           f"Cristóbal cuyo nombre o código coincida con '{query}'.",
+                "search": search,
+            })
+
+        shown = matches.head(MAX_DETAILS)
+        ids = set(shown["id_propuesta"])
+        metas = self._read(META_VIEW)[
+            ["id_meta", "codigo_meta_extendida", "descripcion_meta", "codigo_proyecto",
+             "nombre_proyecto"]
+        ]
+        shown = shown.merge(metas, on="id_meta", how="left")
+        follow_up = self._read(FOLLOW_UP_TABLE)
+        follow_up = follow_up[follow_up["id_propuesta"].isin(ids)].sort_values("fecha_corte")
+        crp = self._read(CRP_TABLE)
+        relations = self._read(CRP_PROPOSAL_TABLE)[["id_crp", "id_propuesta"]]
+        lines = self._read(CRP_LINES_TABLE)
+        sharing = relations.groupby("id_crp")["id_propuesta"].nunique()
+        linked = relations[relations["id_propuesta"].isin(ids)].merge(crp, on="id_crp")
+
+        details = []
+        for row in shown.itertuples():
+            own = linked[linked["id_propuesta"] == row.id_propuesta]
+            details.append({
+                "code": row.codigo_propuesta,
+                "name": row.nombre_propuesta,
+                "metodologia": row.metodologia,
+                "vigencia_ejecucion": row.vigencia_ejecucion,
+                "status": row.estado_propuesta,
+                "progress": row.avance_gestion,
+                "difficulties": row.dificultades,
+                "funded_with_resources": row.se_ejecuta_con_recursos,
+                "reported_population": row.poblacion_beneficiada,
+                "sector": row.nombre_sector,
+                "meta": {"code": row.codigo_meta_extendida, "description": row.descripcion_meta},
+                "project": {"code": row.codigo_proyecto, "name": row.nombre_proyecto},
+                "history": [
+                    {"cutoff": _date_text(h.fecha_corte), "status": h.estado_propuesta,
+                     "progress": h.avance_gestion}
+                    for h in follow_up[follow_up["id_propuesta"] == row.id_propuesta]
+                    .itertuples()
+                ],
+                "commitments": [
+                    {
+                        "crp": c.numero_crp,
+                        "vigencia": c.vigencia,
+                        "registered": _date_text(c.fecha_registro),
+                        "type": c.tipo_compromiso,
+                        "object": _truncate(c.objeto),
+                        "value_for_this_meta": _sum(lines.loc[
+                            (lines["id_crp"] == c.id_crp) & (lines["id_meta"] == row.id_meta),
+                            "valor_asignado_pp",
+                        ]),
+                        "proposals_in_this_crp": int(sharing.get(c.id_crp, 0)),
+                    }
+                    for c in own.itertuples()
+                ],
+            })
+
+        data = {
+            "locality": "San Cristóbal",
+            "cutoff": cut,
+            "found": len(matches),
+            "matches": details,
+            "value_note": (
+                "value_for_this_meta es lo que el CRP asigna a la meta de la propuesta; un "
+                "mismo CRP puede financiar varias propuestas (proposals_in_this_crp), así que "
+                "no es el valor exclusivo de esta propuesta."
+            ),
+            "unit": COP_NOTE,
+        }
+        if len(matches) > MAX_DETAILS:
+            data["more_matches"] = [
+                {"code": r.codigo_propuesta, "name": r.nombre_propuesta}
+                for r in matches.iloc[MAX_DETAILS:MAX_DETAILS + MAX_SAMPLES].itertuples()
+            ]
+
+        sources = self._sources()
+        evidence = [ledger.add(
+            sources.get("PP"), FOLLOW_UP_TABLE,
+            f"{PROPOSAL_TABLE} + {FOLLOW_UP_TABLE} · {search} · corte {cut}",
+            f"{len(matches)} propuesta(s): "
+            + "; ".join(f"{d['code']} '{d['name']}' — {d['status']}" for d in details) + ".",
+        )]
+        crps = [(d["code"], c) for d in details for c in d["commitments"]]
+        if crps:
+            evidence.append(ledger.add(
+                sources.get("CRP"), CRP_PROPOSAL_TABLE,
+                f"{CRP_PROPOSAL_TABLE} + {CRP_TABLE} · {search}",
+                "; ".join(f"propuesta {code}: CRP {c['crp']} ({c['vigencia']}), "
+                          f"{_cop(c['value_for_this_meta'])} para su meta"
+                          for code, c in crps) + ".",
+            ))
         return data, evidence
 
     def _contrast(self, params: ContrastParams, ledger: EvidenceLedger):
@@ -1180,6 +1364,175 @@ class AgentTools:
                 f"Veredicto: {verdict}.",
             ),
         ]
+        return data, evidence
+
+    def _contracts(self, params: ContractParams, ledger: EvidenceLedger):
+        """SECOP II contracts. Links (contract-project-meta) are filtered first, then the result
+        is deduplicated to distinct contracts BEFORE adding values: the source repeats the full
+        contract value on every link."""
+        contracts = self._read(CONTRACT_TABLE)
+        links = self._read(CONTRACT_LINK_TABLE)
+        metas = self._read(META_VIEW)
+        search = _filters(
+            year=params.year, project_code=params.project_code, meta_code=params.meta_code,
+            object_keyword=params.object_keyword, status=params.status,
+            verified_only=params.verified_only or None, group_by=params.group_by,
+        )
+        first = metas.drop_duplicates("codigo_proyecto")
+        projects = pd.Series(first["nombre_proyecto"].to_numpy(),
+                             index=first["codigo_proyecto"].astype(str))
+        goals = metas.set_index(metas["codigo_meta_extendida"].astype(str))
+        if params.project_code and params.project_code not in projects.index:
+            raise _NoData({
+                "found": 0,
+                "message": f"No hay ningún proyecto con el código {params.project_code} en el "
+                           "plan local de San Cristóbal.",
+                "search": search,
+            })
+        if params.meta_code and params.meta_code not in goals.index:
+            raise _NoData({
+                "found": 0,
+                "message": f"No hay ninguna meta con el código {params.meta_code} en el plan "
+                           "local de San Cristóbal.",
+                "search": search,
+            })
+        if params.year is not None:
+            years = sorted({int(y) for y in contracts["vigencia"].dropna()})
+            if params.year not in years:
+                raise _NoData({"error": "Vigencia sin datos", "available_years": years})
+            contracts = contracts[contracts["vigencia"] == params.year]
+        if params.status:
+            known = sorted(set(contracts["estado_contrato"].dropna()))
+            if _label(params.status) not in {_label(state) for state in known}:
+                raise _NoData({"error": "Estado desconocido", "valid_statuses": known})
+            contracts = contracts[contracts["estado_contrato"].map(_label) == _label(params.status)]
+        if params.object_keyword:
+            contracts = contracts[_contains(contracts["objeto"], params.object_keyword)]
+
+        # "Relevant" link level: the meta when filtering by meta, otherwise the project.
+        level = "meta" if params.meta_code else "proyecto"
+        status_column = f"estado_vinculo_{level}"
+        matched = links[links["id_contrato"].isin(contracts["id_contrato"])]
+        if params.project_code:
+            matched = matched[matched["codigo_proyecto"].astype(str) == params.project_code]
+        if params.meta_code:
+            matched = matched[matched["codigo_meta"].astype(str) == params.meta_code]
+        if params.verified_only:
+            matched = matched[matched[status_column] == LINK_VERIFIED]
+        pending_only = contracts[~contracts["id_contrato"].isin(
+            links.loc[links["estado_vinculo_proyecto"] == LINK_VERIFIED, "id_contrato"]
+        )]
+        contracts = contracts[contracts["id_contrato"].isin(matched["id_contrato"])]
+        if contracts.empty:
+            payload: dict[str, Any] = {
+                "found": 0,
+                "message": "Ningún contrato coincide con los filtros.",
+                "search": search,
+            }
+            if params.project_code or params.meta_code:
+                payload["message"] = (
+                    "No hay contratos con un vínculo verificado a ese proyecto o meta con estos "
+                    "filtros."
+                )
+                if len(pending_only):
+                    payload["message"] += (
+                        f" Hay {len(pending_only)} contratos (con los demás filtros) cuyo vínculo "
+                        "con un proyecto está pendiente de verificación: alguno podría "
+                        "pertenecer a él."
+                    )
+                payload["contracts_with_pending_project_link"] = len(pending_only)
+            raise _NoData(payload)
+
+        ids = contracts["id_contrato"]
+        values = pd.to_numeric(contracts["valor_contrato"], errors="coerce")
+        total = float(values.sum())
+
+        def verified_at(column: str) -> pd.Series:
+            return ids.isin(matched.loc[matched[column] == LINK_VERIFIED, "id_contrato"])
+
+        verified = verified_at(status_column)
+        link_status = {
+            name: {"verified": int(flags.sum()), "pending": int((~flags).sum())}
+            for name, flags in (("proyecto", verified_at("estado_vinculo_proyecto")),
+                                ("meta", verified_at("estado_vinculo_meta")))
+        }
+        groups = _contract_groups(params.group_by, contracts, matched, projects, goals)
+        statuses = matched.groupby("id_contrato").agg(
+            proyectos=("codigo_proyecto", lambda s: sorted(set(s.dropna().astype(str)))),
+            metas=("codigo_meta", lambda s: sorted(set(s.dropna().astype(str)))),
+            proyecto_verificado=("estado_vinculo_proyecto", lambda s: (s == LINK_VERIFIED).any()),
+            meta_verificada=("estado_vinculo_meta", lambda s: (s == LINK_VERIFIED).any()),
+        )
+        pending_text = "Pendiente de verificación"
+        sample = [
+            {
+                "reference": row.referencia_contrato,
+                "object": _truncate(row.objeto),
+                "value": row.valor_contrato,
+                "status": row.estado_contrato,
+                "signed": _date_text(row.fecha_firma),
+                "year": row.vigencia,
+                "projects": statuses.at[row.id_contrato, "proyectos"],
+                "metas": statuses.at[row.id_contrato, "metas"],
+                "project_link": LINK_VERIFIED
+                if statuses.at[row.id_contrato, "proyecto_verificado"] else pending_text,
+                "meta_link": LINK_VERIFIED
+                if statuses.at[row.id_contrato, "meta_verificada"] else pending_text,
+                "public_url": row.url_contrato,
+            }
+            for row in contracts.assign(sort_value=values)
+            .sort_values(["sort_value", "referencia_contrato"], ascending=[False, True])
+            .head(MAX_SAMPLES).itertuples()
+        ]
+        zero = int((values == 0).sum())
+        level_text = "la meta" if level == "meta" else "el proyecto"
+        data = {
+            "locality": "San Cristóbal",
+            "unit": COP_NOTE,
+            "search": search,
+            "contracts": len(contracts),
+            "total_value": total,
+            "zero_value_contracts": zero,
+            "verification": {
+                "level": level,
+                "verified_contracts": int(verified.sum()),
+                "pending_contracts": int((~verified).sum()),
+                "pct_verified": _pct(int(verified.sum()), len(contracts)),
+                "verified_value": float(values[verified].sum()),
+                "pending_value": float(values[~verified].sum()),
+                "rule": (
+                    f"Un contrato cuenta como verificado si al menos uno de sus vínculos (con "
+                    f"los filtros aplicados) tiene {level_text} en estado 'Verificado'; si todos "
+                    "están 'Pendiente de verificación', cuenta como pendiente."
+                ),
+            },
+            "link_status_by_level": link_status,
+            "group_by": params.group_by,
+            "groups": groups[:MAX_GROUPS],
+            "groups_total": len(groups),
+            "sample_contracts": sample,
+            "notes": [n for n in (
+                "total_value y valor_contratado son el valor firmado de cada contrato, contado "
+                "una sola vez por contrato: no es lo ejecutado ni lo pagado.",
+                "Un contrato puede estar vinculado a varios proyectos o metas: en la agrupación "
+                "por proyecto o meta aparece en cada uno con su valor completo, así que esos "
+                "valores se solapan y no se deben sumar entre sí."
+                if params.group_by in ("proyecto", "meta") else None,
+                "Un vínculo 'Pendiente de verificación' no está confirmado: no afirmes que ese "
+                "contrato pertenece al proyecto o a la meta.",
+                f"{zero} contrato(s) tienen valor 0 en la fuente." if zero else None,
+                "No se publican nombres de contratistas.",
+            ) if n],
+        }
+        summary = (
+            f"{len(contracts)} contratos; valor contratado {_cop(total)} (valor firmado, una vez "
+            f"por contrato); {int(verified.sum())} con vínculo verificado con {level_text} y "
+            f"{int((~verified).sum())} pendientes."
+        )
+        evidence = [ledger.add(
+            self._sources().get("CTR"), CONTRACT_TABLE,
+            f"{CONTRACT_TABLE} + {CONTRACT_LINK_TABLE} · {search}", summary,
+        )]
         return data, evidence
 
     def _report_gap(self, params: GapParams, _: EvidenceLedger):
@@ -1257,6 +1610,47 @@ def _delivery_counts(rows: pd.DataFrame) -> dict[str, int]:
     }
 
 
+def _contract_groups(
+    group_by: str, contracts: pd.DataFrame, links: pd.DataFrame, projects: pd.Series,
+    goals: pd.DataFrame,
+) -> list[dict[str, Any]]:
+    """Contracts and value per group, always over DISTINCT contracts. By project or meta a
+    contract counts in every group it is linked to; contracts without any identified
+    project/meta (pending links) form their own group."""
+    values = contracts.set_index("id_contrato")["valor_contrato"]
+
+    def block(ids: set) -> dict[str, Any]:
+        chosen = pd.to_numeric(values[values.index.isin(ids)], errors="coerce")
+        return {"contratos": len(chosen), "valor_contratado": float(chosen.sum())}
+
+    groups = []
+    if group_by in ("estado", "vigencia"):
+        column = "estado_contrato" if group_by == "estado" else "vigencia"
+        key = contracts[column].astype("string").fillna("Sin dato")
+        for value, group in contracts.groupby(key, sort=False):
+            groups.append({"codigo": None, "nombre": str(value),
+                           **block(set(group["id_contrato"]))})
+        if group_by == "vigencia":
+            return sorted(groups, key=lambda item: item["nombre"])
+    else:
+        code_column = "codigo_proyecto" if group_by == "proyecto" else "codigo_meta"
+        coded = links.dropna(subset=[code_column])
+        for code, group in coded.groupby(coded[code_column].astype(str), sort=False):
+            item = {"codigo": code}
+            if group_by == "proyecto":
+                item["nombre"] = projects.get(code)
+            else:
+                item["nombre"] = goals["descripcion_meta"].get(code)
+                item["codigo_proyecto"] = goals["codigo_proyecto"].get(code)
+            groups.append({**item, **block(set(group["id_contrato"]))})
+        without = set(contracts["id_contrato"]) - set(coded["id_contrato"])
+        if without:
+            label = ("Sin proyecto verificado (vínculo pendiente)" if group_by == "proyecto"
+                     else "Sin meta verificada (vínculo pendiente)")
+            groups.append({"codigo": None, "nombre": label, **block(without)})
+    return sorted(groups, key=lambda item: (-item["valor_contratado"], str(item["nombre"])))
+
+
 def _source_breakdown(lines: pd.DataFrame) -> list[dict[str, Any]]:
     """Value of the CRP lines by provenance (curated file vs portal supplement)."""
     out = []
@@ -1325,6 +1719,32 @@ def _contains(column: pd.Series, keyword: str) -> pd.Series:
     """Accent/case-insensitive substring match. Plain text, never a regex or SQL."""
     needle = normalize_label(keyword)
     return column.map(lambda value: needle in (_label(value) or ""))
+
+
+def _match_proposals(proposals: pd.DataFrame, query: str) -> pd.DataFrame:
+    """Exact code, else name substring, else every word of 4+ letters in the name.
+
+    The word fallback finds 'Internet a mi barrio' for 'internet en mi barrio'.
+    """
+    if query.isdigit():
+        return proposals[proposals["codigo_propuesta"].astype(str) == query]
+    by_phrase = proposals[_contains(proposals["nombre_propuesta"], query)]
+    if not by_phrase.empty:
+        return by_phrase
+    words = [word for word in normalize_label(query).split() if len(word) >= 4]
+    if not words:
+        return by_phrase
+    names = proposals["nombre_propuesta"].map(lambda value: _label(value) or "")
+    return proposals[names.map(lambda name: all(word in name for word in words))]
+
+
+def _truncate(value: object, limit: int = 200) -> str | None:
+    text = _label_text(value)
+    return text if text is None or len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _label_text(value: object) -> str | None:
+    return None if value is None or pd.isna(value) else str(value).strip()
 
 
 def _pct(part: object, whole: object) -> float | None:

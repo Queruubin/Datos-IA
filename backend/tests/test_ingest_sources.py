@@ -38,7 +38,14 @@ def test_ingests_every_source_with_metadata(package):
     assert {"f1_pac_execution", "f3_pp_commitments", "poai", "seguimiento_meta", "pqrs",
             "crp_meta", "meta_ods_relacion"} <= set(store.tables)
     metadata = {m.source_id: m for m in store.read_source_metadata()}
-    assert set(metadata) == {"F1", "F3-commitments", "POAI", "PMR", "PP", "CRP", "ODS", "PQRS"}
+    assert set(metadata) == {"F1", "F3-commitments", "POAI", "PMR", "PP", "CRP", "ODS", "PQRS",
+                             "CTR"}
+    contracts = metadata["CTR"]
+    assert contracts.portal_url is None  # SECOP II, not the Bogotá open-data portal
+    assert contracts.data_cutoff == "2026-05-20"  # latest signing date
+    assert contracts.rows == 5  # distinct contracts, not link rows
+    assert contracts.unit == "COP (pesos colombianos)"
+    assert "SECOP II" in contracts.origin_note
 
     f1 = metadata["F1"]
     assert f1.rows == 2  # San Cristóbal, May and June

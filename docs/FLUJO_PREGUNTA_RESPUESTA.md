@@ -15,7 +15,7 @@ El agente no consulta las fuentes en tiempo real. Primero se ejecuta la **ingest
 ```
 curated_data/ (paquete del equipo) ──► validación contra manifest.json ──┐
   POAI, PMR, propuestas, CRP 2025,      (si un conteo no coincide,       │
-  ODS, PQRS                              no se carga nada)               ├──► base DuckDB local
+  ODS, PQRS, contratos SECOP II          no se carga nada)               ├──► base DuckDB local
                                                                          │    (modelo relacional + vistas)
 Portal Datos Abiertos (API CKAN) ──► descarga + limpieza ────────────────┘
   F1: ejecución del PAC                 (caché en data/raw)                   tabla source_metadata:
@@ -23,7 +23,7 @@ Portal Datos Abiertos (API CKAN) ──► descarga + limpieza ─────�
                                                                               filas, unidad
 ```
 
-- El **paquete curado** (`curated_data/`) es la fuente única para POAI, PMR, presupuestos participativos, CRP, ODS y PQRS.
+- El **paquete curado** (`curated_data/`) es la fuente única para POAI, PMR, presupuestos participativos, CRP, ODS, PQRS y contratos SECOP II (sin la columna `Contratista`, que nunca se lee).
 - Del **portal** solo se usan el PAC (F1), que no está en el paquete, y el archivo de compromisos (F3), del que se toman los CRP de 2026 que faltan en el paquete. Esas filas quedan marcadas con `source = 'portal'`.
 - La base guarda un **marcador de versión**. `python -m app.cli ingest --if-outdated` (lo que ejecutan `iniciar.bat` e `iniciar.sh`) solo vuelve a cargar si la base no existe, es de una versión anterior o cambió algún archivo de `curated_data/`.
 
@@ -111,6 +111,7 @@ Gemini **no responde todavía**: devuelve qué herramientas quiere usar y con qu
 | `get_pqrs_stats` | Cantidad de PQRS, temas frecuentes, mediana de días de respuesta, porcentaje cerrado y estado de la respuesta | PQRS |
 | `get_participatory_budget` | Propuestas por estado y metodología, ejemplos y valor comprometido en CRP | Propuestas + CRP |
 | `compare_participatory_budget_vs_commitments` | Contraste: ¿las propuestas que deberían tener contrato tienen CRP? | Propuestas + CRP |
+| `get_contracts` | Contratos SECOP II 2025–2026 por proyecto, meta, estado o vigencia: cantidad, valor firmado (una vez por contrato, no ejecutado ni pagado), cuántos tienen el vínculo verificado o pendiente, y ejemplos con enlace público. Sin nombres de contratistas | Contratos (CTR) |
 | `report_information_gap` | Gemini la usa cuando ninguna fuente responde la pregunta | — |
 
 Los valores del POAI, el PMR y los CRP están en **pesos colombianos**, según la documentación del paquete curado. En el PAC la unidad sigue sin documentarse.
@@ -188,6 +189,7 @@ Reglas:
 | `get_changes_between_cutoffs` | Barras agrupadas antes/después por corte (PMR o estados de propuestas) |
 | `compare_poai_vs_pmr`, `compare_participatory_budget_vs_commitments` | Indicadores con el veredicto calculado por código |
 | `get_goal_detail` | Indicadores del PMR de la meta y barras del POAI por año |
+| `get_contracts` | Indicadores (contratos, valor contratado, % con vínculo verificado) y barras del valor por grupo (por proyecto o meta las barras se solapan) |
 
 Contrato (`charts` en la respuesta de `/api/chat`): `id`, `kind` (`bars`, `grouped_bars`, `line`, `kpis`), `title`, `unit` (`COP`, `percent`, `count`, `days`, `unknown`), `evidence_id` (principal), `evidence_ids`, `categories`, `series` (`name`, `values`), `kpis` (`label`, `value`, `unit`), `note`, `data_cutoff` y `verdict`.
 

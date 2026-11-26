@@ -5,8 +5,8 @@ Sources:
 - F3: Presupuestos Participativos commitments (CRP), downloaded from the portal ONLY as the
   source of the CRP lines of vigencias missing from the curated package (2026).
 - CURADO: the curated relational package of the team (`curated_data/`): POAI, PMR,
-  Presupuestos Participativos, CRP, ODS and PQRS. It is the single source of truth for those
-  domains and is validated against its manifests before anything is written.
+  Presupuestos Participativos, CRP, ODS, PQRS and SECOP II contracts. It is the single source
+  of truth for those domains and is validated against its manifests before anything is written.
 """
 
 import logging
@@ -33,7 +33,7 @@ SOURCE_IDS = ("F1", "F3", CURATED_SOURCE)
 PP_COMMITMENTS_TABLE = "f3_pp_commitments"
 
 # Bump when the tables, views or transformations change: older databases get re-ingested.
-DATA_VERSION = 2
+DATA_VERSION = 3
 # Portal sources the database must hold to be considered complete.
 REQUIRED_PORTAL_SOURCES = ("F1", "F3-commitments")
 # Sources replaced by the curated package: their tables and metadata are removed.
@@ -130,6 +130,18 @@ CURATED_DOMAINS = (
         "Archivo PQRS 2022-2026 de la Secretaría Distrital de Gobierno, normalizado por el "
         "equipo (curated_data/Carga_PQRS_SC).",
         portal_dataset_id=PQRS_DATASET_ID,
+    ),
+    _CuratedDomain(
+        "CTR", "Contratos SECOP II vinculados a proyectos y metas (consolidado por el equipo)",
+        "contrato",
+        (curated.CONTRACTS_FILE,),
+        None,  # computed: last signing date
+        "Contratos de la Alcaldía Local de San Cristóbal publicados en SECOP II (vigencias 2025 "
+        "y 2026), vinculados por el equipo a proyectos, metas y CRP "
+        "(curated_data/Carga_Contratos_SC). Valor = valor firmado del contrato (no ejecutado ni "
+        "pagado). Parte de los vínculos está pendiente de verificación. No incluye nombres de "
+        "contratistas.",
+        unit=COP,
     ),
 )
 
@@ -326,6 +338,8 @@ class IngestSources:
         cutoff = domain.data_cutoff
         if domain.source_id == "PQRS":
             cutoff = str(model.tables["pqrs"]["fecha_registro"].max().date())
+        elif domain.source_id == "CTR":
+            cutoff = str(model.tables["contrato"]["fecha_firma"].max())
         return SourceMetadata(
             source_id=domain.source_id,
             title=domain.title,

@@ -263,7 +263,72 @@ def write_mini_package(root: Path) -> Path:
         "periodo": {"primera_fecha_registro": "2025-01-01 08:00:00",
                     "ultima_fecha_registro": "2025-04-01 08:00:00"},
     })
+
+    _write_contracts(root)
     return root
+
+
+# Natural person in the contracts file: must never reach a table nor a tool.
+CONTRACTOR_NAME = "PERSONA NATURAL FICTICIA"
+
+CONTRACT_HEADER = [
+    "ID Contrato", "Referencia del Contrato", "Vigencia del contrato", "Fecha de Firma",
+    "Objeto del Contrato", "Contratista", "Valor del Contrato (COP)", "Estado Contrato",
+    "Código Proyecto", "Nombre del Proyecto", "Vigencia del proyecto", "Código Meta", "Meta",
+    "ID Meta", "Número de CRP del vínculo", "Vigencia presupuestal CRP",
+    "CRP registrados del contrato", "Estado vínculo proyecto", "Estado vínculo meta",
+    "Motivo de verificación", "Enlace público del proceso", "Enlace público del contrato",
+    "Registro en Datos Abiertos",
+]
+V, P = "Verificado", "Pendiente de verificación"
+
+
+def _contract_row(number: int, year: int, signed: str, objeto: str, value: int, status: str,
+                  project: str, meta: str, crp: str, project_link: str, meta_link: str,
+                  reason: str = "") -> list:
+    return [
+        f"CO1.PCCNTR.{number}", f"FDLSC-CPS-{number:03d}-{year}", year, signed, objeto,
+        CONTRACTOR_NAME, value, status, project, f"Proyecto {project}" if project else "",
+        year if project else "", meta, f"Meta {meta}" if meta else "",
+        f"M-{year}-{meta}" if meta else "", crp, year if crp else "", crp, project_link,
+        meta_link, reason, f"https://community.secop.gov.co/proceso/{number}",
+        f"https://community.secop.gov.co/contrato/{number}",
+        f"https://www.datos.gov.co/resource/jbjy-vk9h.json?id_contrato=CO1.PCCNTR.{number}",
+    ]
+
+
+def _write_contracts(root: Path) -> None:
+    """Five contracts, eight link rows. Contract 1 has three links (its value 1000 repeats on
+    each row); contract 3 has only a pending link; contract 5 is worth 0; 'cedido' comes in
+    lower case as in the real file."""
+    signed = "2025-02-01 10:00:00.123000"
+    rows = [
+        _contract_row(1, 2025, signed, "Prestar servicios de apoyo a la gestión cultural", 1000,
+                      "En ejecución", "2251", "22511", "10", V, V),
+        _contract_row(1, 2025, signed, "Prestar servicios de apoyo a la gestión cultural", 1000,
+                      "En ejecución", "2251", "22512", "11", V, V),
+        _contract_row(1, 2025, signed, "Prestar servicios de apoyo a la gestión cultural", 1000,
+                      "En ejecución", "2502", "", "", V, P,
+                      "La evidencia identifica el proyecto. Falta soporte de la meta específica."),
+        _contract_row(2, 2026, "2026-03-10 09:00:00", "Suministro de árboles para arborización",
+                      500, "cedido", "2502", "25021", "20", V, V),
+        _contract_row(3, 2025, "2025-01-15 08:00:00", "Mantenimiento de la malla vial local",
+                      300, "Cerrado", "", "", "", P, P, "Pendiente de acceso al certificado"),
+        _contract_row(4, 2026, "2026-05-20 11:30:00", "Festival de rock al parque local", 2000,
+                      "Modificado", "2251", "", "", V, P),
+        _contract_row(4, 2026, "2026-05-20 11:30:00", "Festival de rock al parque local", 2000,
+                      "Modificado", "", "", "", P, P, "Sin CRP verificable"),
+        _contract_row(5, 2025, "2025-06-30 16:00:00", "Adición sin valor al convenio vial", 0,
+                      "Aprobado", "2502", "25022", "30", V, V),
+    ]
+    _write(root, "Carga_Contratos_SC", "Consulta_agente_San_Cristobal_2025_2026.csv",
+           CONTRACT_HEADER, rows)
+    _manifest(root, "Carga_Contratos_SC", {
+        "conteos": {"vinculos": 8, "contratos": 5, "contratos_con_varios_vinculos": 2,
+                    "vinculos_proyecto_verificados": 6, "vinculos_meta_verificados": 4,
+                    "contratos_valor_cero": 1},
+        "valor_total_contratos": 3800,  # summing the rows would give 7800
+    })
 
 
 def portal_commitments_frame() -> pd.DataFrame:

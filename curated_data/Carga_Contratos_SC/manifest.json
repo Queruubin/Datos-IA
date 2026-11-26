@@ -1,0 +1,15 @@
+{
+  "fuente": "SECOP II - Alcaldía Local de San Cristóbal, vigencias 2025 y 2026 (consolidado por el equipo)",
+  "archivo": "csv/Consulta_agente_San_Cristobal_2025_2026.csv",
+  "grano": "Una fila por vínculo contrato ↔ (proyecto, meta, CRP)",
+  "conteos": {
+    "vinculos": 3853,
+    "contratos": 1936,
+    "contratos_con_varios_vinculos": 1318,
+    "vinculos_proyecto_verificados": 2091,
+    "vinculos_meta_verificados": 1034,
+    "contratos_valor_cero": 45
+  },
+  "valor_total_contratos": 204352632384,
+  "privacidad": "La columna Contratista (nombres de personas naturales) no se carga en ninguna tabla."
+}

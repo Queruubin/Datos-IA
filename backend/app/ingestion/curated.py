@@ -1,8 +1,9 @@
 """Curated relational package of San Cristóbal (`curated_data/` at the repository root).
 
-The team delivered six load folders (POAI, PMR, Presupuestos Participativos, CRP, ODS, PQRS) with
-normalized CSVs, a `manifest.json` with the expected results and PostgreSQL load scripts. This
-module rebuilds the same tables in memory (pandas), applying the transformations of those scripts:
+The team delivered seven load folders (POAI, PMR, Presupuestos Participativos, CRP, ODS, PQRS
+and SECOP II contracts) with CSVs, a `manifest.json` with the expected results and, for the first
+six, PostgreSQL load scripts. This module rebuilds the same tables in memory (pandas), applying
+the transformations of those scripts:
 
 - `meta_proyecto.id_sector` (sector depends on the meta, not on the project) and
   `meta_proyecto.id_entidad` (Carga_CRP_SC/sql/00_ajuste_entidad.sql).
@@ -11,6 +12,10 @@ module rebuilds the same tables in memory (pandas), applying the transformations
 - PMR rows are linked to the meta by `codigo_indicador`.
 - `crp_meta` keeps every source line (also the 4 repeated CRP-meta pairs); `crp_propuesta` keeps
   unique pairs.
+- Contracts: the source has one row per contract-(project, meta, CRP) link and repeats the full
+  contract value on every row. It is split into `contrato` (one row per contract) and
+  `contrato_vinculo` (one row per link). Only whitelisted columns are read: `Contratista`
+  (names of natural persons) is never loaded.
 
 Surrogate ids (`id_*`) are generated in file order; natural keys are kept. Every count and total
 of the manifests is checked and any mismatch raises `CuratedDataError` (nothing is written).
@@ -33,7 +38,9 @@ ODS_DIR = "Carga_ODS_SC"
 PMR_DIR = "Carga_PMR_SC"
 PP_DIR = "Carga_PP_SC"
 PQRS_DIR = "Carga_PQRS_SC"
-DOMAIN_DIRS = (POAI_DIR, CRP_DIR, ODS_DIR, PMR_DIR, PP_DIR, PQRS_DIR)
+CONTRACTS_DIR = "Carga_Contratos_SC"
+DOMAIN_DIRS = (POAI_DIR, CRP_DIR, ODS_DIR, PMR_DIR, PP_DIR, PQRS_DIR, CONTRACTS_DIR)
+CONTRACTS_FILE = "Consulta_agente_San_Cristobal_2025_2026.csv"
 
 SAN_CRISTOBAL_ID = 4
 CURATED = "curated"
@@ -46,8 +53,36 @@ MODEL_TABLES = (
     "localidad", "sector", "objetivo_estrategico", "programa", "proyecto", "entidad",
     "meta_proyecto", "poai", "seguimiento_meta", "propuesta_ciudadana", "seguimiento_propuesta",
     "crp", "crp_meta", "crp_propuesta", "ods", "meta_ods", "meta_ods_relacion",
-    "tipo_peticion", "medio_recepcion", "subtema_pqrs", "pqrs",
+    "tipo_peticion", "medio_recepcion", "subtema_pqrs", "pqrs", "contrato", "contrato_vinculo",
 )
+
+# Contracts file: source column -> table column. Explicit whitelists: any other column (above all
+# `Contratista`, names of natural persons) is never read.
+CONTRACT_COLUMNS = {
+    "ID Contrato": "id_contrato",
+    "Referencia del Contrato": "referencia_contrato",
+    "Vigencia del contrato": "vigencia",
+    "Fecha de Firma": "fecha_firma",
+    "Objeto del Contrato": "objeto",
+    "Valor del Contrato (COP)": "valor_contrato",
+    "Estado Contrato": "estado_contrato",
+    "Enlace público del proceso": "url_proceso",
+    "Enlace público del contrato": "url_contrato",
+    "Registro en Datos Abiertos": "url_datos_abiertos",
+}
+CONTRACT_LINK_COLUMNS = {
+    "ID Contrato": "id_contrato",
+    "Código Proyecto": "codigo_proyecto",
+    "Vigencia del proyecto": "vigencia_proyecto",
+    "Código Meta": "codigo_meta",
+    "Número de CRP del vínculo": "numero_crp",
+    "Vigencia presupuestal CRP": "vigencia_crp",
+    "Estado vínculo proyecto": "estado_vinculo_proyecto",
+    "Estado vínculo meta": "estado_vinculo_meta",
+    "Motivo de verificación": "motivo_verificacion",
+}
+LINK_VERIFIED = "Verificado"
+LINK_PENDING = "Pendiente de verificación"
 
 
 class CuratedDataError(ValueError):
@@ -80,15 +115,23 @@ class CrpSupplement:
 
 
 # --- reading ---------------------------------------------------------------------------------
-def read_csv(root: Path, domain: str, name: str) -> pd.DataFrame:
+def read_csv(
+    root: Path, domain: str, name: str, columns: Iterable[str] | None = None
+) -> pd.DataFrame:
     """Read one curated CSV as text. Only empty cells are null (the package already turned
-    the source 'NA' into empty cells); every other literal is kept."""
+    the source 'NA' into empty cells); every other literal is kept. With `columns`, ONLY those
+    columns are read (the others never reach memory)."""
     path = Path(root) / domain / "csv" / name
     if not path.exists():
         raise CuratedDataError([f"Falta el archivo {domain}/csv/{name}"])
-    frame = pd.read_csv(
-        path, encoding="utf-8-sig", dtype=str, keep_default_na=False, na_values=[""]
-    )
+    wanted = list(columns) if columns is not None else None
+    try:
+        frame = pd.read_csv(
+            path, encoding="utf-8-sig", dtype=str, keep_default_na=False, na_values=[""],
+            usecols=wanted,
+        )
+    except ValueError as error:  # a whitelisted column is missing
+        raise CuratedDataError([f"{domain}/csv/{name}: {error}"]) from error
     return frame.apply(lambda column: column.str.strip())
 
 
@@ -134,6 +177,7 @@ def load_curated_package(root: Path) -> CuratedModel:
     _build_pp(root, tables, problems)
     _build_crp(root, tables, problems, before_pp=False)
     _build_pqrs(root, tables, problems)
+    _build_contracts(root, tables, problems)
     if problems:
         raise CuratedDataError(problems)
 
@@ -445,6 +489,66 @@ def _build_pqrs(root: Path, tables: dict, problems: list[str]) -> None:
     tables["pqrs"] = pqrs
 
 
+def _build_contracts(root: Path, tables: dict, problems: list[str]) -> None:
+    """SECOP II contracts: `contrato` (one row per contract) + `contrato_vinculo` (one row per
+    contract-project-meta-CRP link). The CRP numbers of this file are kept as an attribute: they
+    are NOT joined with the `crp` table (which only has participatory-budget CRPs)."""
+    raw = read_csv(root, CONTRACTS_DIR, CONTRACTS_FILE,
+                   columns={**CONTRACT_COLUMNS, **CONTRACT_LINK_COLUMNS})
+    contract_rows = raw[list(CONTRACT_COLUMNS)].rename(columns=CONTRACT_COLUMNS)
+    # Contract-level fields are repeated on every link row: they must never disagree.
+    varying = [
+        column for column in contract_rows.columns if column != "id_contrato"
+        and (contract_rows.groupby("id_contrato")[column].nunique(dropna=False) > 1).any()
+    ]
+    if varying:
+        problems.append(f"contratos: datos del contrato distintos entre sus vínculos {varying}")
+    contrato = contract_rows.drop_duplicates("id_contrato").reset_index(drop=True)
+    contrato["vigencia"] = _int(contrato["vigencia"])
+    contrato["fecha_firma"] = pd.to_datetime(
+        contrato["fecha_firma"], format="ISO8601", errors="raise"
+    ).dt.date
+    contrato["valor_contrato"] = _num(contrato["valor_contrato"])
+    contrato["estado_contrato"] = contrato["estado_contrato"].map(
+        lambda value: value[:1].upper() + value[1:], na_action="ignore"
+    )
+    tables["contrato"] = contrato
+
+    links = _ids(raw[list(CONTRACT_LINK_COLUMNS)].rename(columns=CONTRACT_LINK_COLUMNS),
+                 "id_vinculo")
+    links["vigencia_proyecto"] = _int(links["vigencia_proyecto"])
+    links["vigencia_crp"] = _int(links["vigencia_crp"])
+    statuses = {LINK_VERIFIED, LINK_PENDING}
+    for level, code in (("proyecto", "codigo_proyecto"), ("meta", "codigo_meta")):
+        status = links[f"estado_vinculo_{level}"]
+        unexpected = set(status.dropna()) - statuses
+        if unexpected or status.isna().any():
+            problems.append(f"contratos: estado de vínculo con {level} inesperado "
+                            f"{sorted(unexpected) or ['vacío']}")
+        unverifiable = int(((status == LINK_VERIFIED) & links[code].isna()).sum())
+        if unverifiable:
+            problems.append(f"contratos: {unverifiable} vínculos con {level} verificado sin código")
+
+    proyecto = tables["proyecto"]
+    local = proyecto[proyecto["id_localidad"] == SAN_CRISTOBAL_ID]
+    unknown = set(links["codigo_proyecto"].dropna()) - set(local["codigo_proyecto"])
+    if unknown:
+        problems.append(f"contratos → proyecto: códigos inexistentes {sorted(unknown)[:10]}")
+    meta = tables["meta_proyecto"]
+    project_codes = dict(zip(proyecto["id_proyecto"], proyecto["codigo_proyecto"], strict=True))
+    meta_project = dict(zip(meta["codigo_meta_extendida"], meta["id_proyecto"].map(project_codes),
+                            strict=True))
+    unknown = set(links["codigo_meta"].dropna()) - set(meta_project)
+    if unknown:
+        problems.append(f"contratos → meta: códigos inexistentes {sorted(unknown)[:10]}")
+    with_meta = links.dropna(subset=["codigo_meta"])
+    mismatched = with_meta[with_meta["codigo_meta"].map(meta_project)
+                           != with_meta["codigo_proyecto"]]
+    if len(mismatched):
+        problems.append(f"contratos: {len(mismatched)} vínculos con una meta de otro proyecto")
+    tables["contrato_vinculo"] = links
+
+
 # --- manifest validation -----------------------------------------------------------------------
 def validate_against_manifests(model: CuratedModel, root: Path) -> list[str]:
     """Compare the built tables with every expected value of the six manifests."""
@@ -553,6 +657,24 @@ def validate_against_manifests(model: CuratedModel, root: Path) -> list[str]:
           q["periodo"]["primera_fecha_registro"])
     check("PQRS última fecha_registro", str(pqrs["fecha_registro"].max()),
           q["periodo"]["ultima_fecha_registro"])
+
+    # Contracts (the value is counted ONCE per contract)
+    c = m[CONTRACTS_DIR]
+    contracts, links = t["contrato"], t["contrato_vinculo"]
+    check("Contratos vínculos", len(links), c["conteos"]["vinculos"])
+    check("Contratos distintos", len(contracts), c["conteos"]["contratos"])
+    check("Contratos con varios vínculos", int((links.groupby("id_contrato").size() > 1).sum()),
+          c["conteos"]["contratos_con_varios_vinculos"])
+    check("Contratos vínculos con proyecto verificado",
+          int((links["estado_vinculo_proyecto"] == LINK_VERIFIED).sum()),
+          c["conteos"]["vinculos_proyecto_verificados"])
+    check("Contratos vínculos con meta verificada",
+          int((links["estado_vinculo_meta"] == LINK_VERIFIED).sum()),
+          c["conteos"]["vinculos_meta_verificados"])
+    check("Contratos con valor 0", int((contracts["valor_contrato"] == 0).sum()),
+          c["conteos"]["contratos_valor_cero"])
+    check("Contratos valor total", float(contracts["valor_contrato"].sum()),
+          float(c["valor_total_contratos"]))
     return problems
 
 

@@ -108,6 +108,28 @@ def test_investment_by_ods(tools):
     assert values(chart) == [(8000.0, 4000.0)]
 
 
+def test_contracts_kpis_and_value_by_project(tools):
+    summary, bars = charts_for(run(tools, "get_contracts"))
+
+    assert summary.kind == "kpis"
+    assert kpis(summary)["Contratos"] == (5.0, "count")
+    assert kpis(summary)["Valor contratado"] == (3800.0, "COP")  # one value per contract
+    assert kpis(summary)["Con vínculo verificado"] == (80.0, "percent")
+    assert "no es lo ejecutado ni lo pagado" in summary.note
+    assert bars.kind == "bars"
+    assert bars.categories[0] == "2251 · Cultura viva"
+    assert values(bars) == [(3000.0, 1500.0, 300.0)]
+    assert "no se deben sumar" in bars.note
+
+
+def test_contracts_by_year_has_no_overlap_note(tools):
+    _, bars = charts_for(run(tools, "get_contracts", {"group_by": "vigencia"}))
+
+    assert bars.categories == ("2025", "2026")
+    assert values(bars) == [(1300.0, 2500.0)]
+    assert "no se deben sumar" not in bars.note
+
+
 def test_pmr_changes_before_after(tools):
     [chart] = charts_for(run(tools, "get_changes_between_cutoffs", {"domain": "pmr"}))
 

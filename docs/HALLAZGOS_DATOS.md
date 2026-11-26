@@ -19,7 +19,7 @@ Esto respalda el problema planteado por el reto de la Secretaría General: *el d
 | F1 · Ejecución PAC de los Fondos de Desarrollo Local | 18 meses | junio de 2025 | 5 |
 | F2 · PQRS de la Secretaría de Gobierno | 4.026 solicitudes | 10 de agosto de 2026 | 6 |
 | F3 · Presupuestos Participativos | 232 propuestas y 78 compromisos | 30 de septiembre de 2026 | 3 |
-| Paquete curado del equipo (POAI, PMR, presupuestos participativos, CRP, ODS, PQRS) | 83 metas, 232 propuestas, 4.026 PQRS | 30 de junio de 2026 (PMR) y 1 de octubre de 2026 (propuestas) | 8 (sección final) |
+| Paquete curado del equipo (POAI, PMR, presupuestos participativos, CRP, ODS, PQRS, contratos SECOP II) | 83 metas, 232 propuestas, 4.026 PQRS, 1.936 contratos | 30 de junio de 2026 (PMR), 1 de octubre de 2026 (propuestas) y 20 de noviembre de 2026 (contratos) | 13 (sección final) |
 
 **Severidad:** 🔴 alta (impide verificar o puede inducir a error) · 🟠 media (exige limpieza o limita el análisis) · 🟢 baja (fricción de formato).
 
@@ -99,9 +99,9 @@ Esto respalda el problema planteado por el reto de la Secretaría General: *el d
 ## Paquete curado del equipo (`curated_data/`)
 
 **Fecha de revisión:** 2026-11-23
-**Contenido:** POAI 2025–2026, PMR (cortes 31-03-2026 y 30-06-2026), presupuestos participativos (cortes 31-03-2026 y 01-10-2026), CRP de presupuestos participativos, alineación ODS y PQRS 2022–2026, con un `manifest.json` por dominio.
+**Contenido:** POAI 2025–2026, PMR (cortes 31-03-2026 y 30-06-2026), presupuestos participativos (cortes 31-03-2026 y 01-10-2026), CRP de presupuestos participativos, alineación ODS, PQRS 2022–2026 y contratos SECOP II 2025–2026 vinculados a proyectos y metas, con un `manifest.json` por dominio.
 
-La ingesta reconstruye el modelo físico del equipo en DuckDB y **compara cada conteo y total con los manifiestos**: si algo no coincide, no se carga nada. Con los archivos actuales todo coincide: 83 metas, 166 registros POAI, 332 de PMR, 232 propuestas con 464 seguimientos, 31 CRP con 66 líneas, 83 relaciones ODS y 4.026 PQRS.
+La ingesta reconstruye el modelo físico del equipo en DuckDB y **compara cada conteo y total con los manifiestos**: si algo no coincide, no se carga nada. Con los archivos actuales todo coincide: 83 metas, 166 registros POAI, 332 de PMR, 232 propuestas con 464 seguimientos, 31 CRP con 66 líneas, 83 relaciones ODS, 4.026 PQRS y 1.936 contratos con 3.853 vínculos.
 
 | # | Hallazgo | Severidad | Evidencia | Tratamiento |
 |---|---|---|---|---|
@@ -113,5 +113,20 @@ La ingesta reconstruye el modelo físico del equipo en DuckDB y **compara cada c
 | C.6 | **Faltan los CRP de 2026 y los estados de las propuestas no coinciden con el portal** | 🔴 | El paquete solo trae CRP de 2025: 66 líneas, 31 CRP y $39.514.916.879, idénticos al portal. El portal (corte 30-09-2026) tiene además 12 líneas de 2026 en 7 CRP por $6.962.956.715, que financian 36 propuestas. Esas 36 están *Contratada* en el archivo de avance del portal (30-09-2026), pero *En formulación* en el corte curado (01-10-2026), donde las 90 propuestas de 2026 están *En formulación* | Los CRP de 2026 se agregan desde el portal, marcados con `source = 'portal'`; todas sus metas y propuestas existen en el modelo. El contraste de 2026 da **No comparable** (ninguna propuesta en un estado que exija CRP) e informa aparte las 36 propuestas que ya tienen CRP. Hay que confirmar con la fuente cuál archivo de avance es el vigente |
 | C.7 | **PQRS: 4 radicados con vigencia distinta al año de registro** | 🟢 | Por ejemplo, vigencia 2023 con fecha de registro 10-01-2024. El archivo `vigencia_fecha_registro_inconsistencias.csv` los lista | Se conserva la vigencia de la fuente; la herramienta de PQRS lo advierte |
 | C.8 | **`USUARIO_ACTUAL` de las PQRS contiene nombres de funcionarios** | 🔴 | 105 valores distintos | Se carga en la tabla `pqrs` para no alterar el modelo, pero la vista `vw_pqrs_detalle` y las herramientas lo excluyen. Una prueba automática verifica que no aparezca en ninguna respuesta |
+
+### Contratos SECOP II (`Carga_Contratos_SC`)
+
+**Fecha de revisión:** 2026-11-25
+**Archivo:** `Consulta_agente_San_Cristobal_2025_2026.csv` (contratos de la Alcaldía Local en SECOP II, vigencias 2025 y 2026, vinculados por el equipo a proyectos, metas y CRP). Se carga en dos tablas: `contrato` (una fila por contrato) y `contrato_vinculo` (una fila por vínculo).
+
+| # | Hallazgo | Severidad | Evidencia | Tratamiento |
+|---|---|---|---|---|
+| C.9 | **El valor del contrato se repite en cada vínculo.** El archivo tiene una fila por vínculo contrato ↔ (proyecto, meta, CRP) y cada fila trae el valor completo del contrato | 🔴 | 3.853 filas, pero solo 1.936 contratos; 1.318 tienen más de un vínculo (hasta 10). Sumar las filas da $480.841.384.658; el valor real (uno por contrato) es $204.352.632.384 | La ingesta separa contratos y vínculos y verifica el total contra el manifiesto. `get_contracts` filtra por vínculo y **deduplica por contrato antes de sumar**. Por proyecto o meta, un contrato aparece en cada grupo con su valor completo: esos valores se solapan y la herramienta advierte que no se suman |
+| C.10 | **Buena parte de los vínculos está pendiente de verificación** | 🔴 | Vínculo con proyecto: 2.091 verificados y 1.762 pendientes; con meta: 1.034 verificados y 2.819 pendientes. Los vínculos pendientes no traen código de proyecto o meta. Por contrato: 1.737 con al menos un proyecto verificado y 199 solo con vínculos pendientes (motivo más frecuente: "Pendiente de acceso al certificado") | Se cargan ambos estados. La herramienta informa siempre cuántos contratos están verificados y cuántos pendientes, y la regla 11 del agente exige decirlo. Un vínculo pendiente no se presenta como confirmado |
+| C.11 | **Contratos con valor 0** | 🟠 | 45 contratos | Se conservan tal cual; la herramienta los cuenta aparte |
+| C.12 | **Estado del contrato con mayúsculas inconsistentes** | 🟢 | "cedido" y "terminado" en minúscula junto a "Cerrado", "Modificado", etc. | Se normaliza la primera letra ("Cedido", "Terminado"). El filtro por estado ignora mayúsculas y tildes |
+| C.13 | **La columna `Contratista` tiene nombres de personas naturales** | 🔴 | 1.849 de los 1.936 contratos tienen referencia CPS (prestación de servicios), en su mayoría con personas naturales | La columna **no se lee**: la ingesta usa una lista explícita de columnas permitidas, así que no llega a ninguna tabla, herramienta ni evidencia. Una prueba automática lo verifica |
+
+Además: el valor es el **valor firmado** del contrato, no lo ejecutado ni lo pagado. Los números de CRP del archivo casi nunca están en la tabla `crp` (que solo tiene CRP de presupuestos participativos), así que se guardan como atributo del vínculo y no se cruzan. Los 30 códigos de proyecto y los 66 de meta existen en el POAI, y cada meta pertenece al proyecto de su vínculo.
 
 **Validaciones positivas:** las 46 metas con propuestas, las 133 propuestas financiadas con CRP y las 83 metas alineadas con ODS existen en el POAI; ninguna propuesta financiada apunta a una meta distinta de la de su CRP; y el contraste de 2025 entre propuestas y CRP es **coherente** (133 de 133).

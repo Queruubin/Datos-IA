@@ -11,7 +11,7 @@ from app.application.agent_tools import (
 )
 from app.domain import ToolCall
 from tests.agent_fakes import build_fixture_db
-from tests.curated_fixture import OFFICIAL_NAME
+from tests.curated_fixture import CONTRACTOR_NAME, OFFICIAL_NAME
 
 
 @pytest.fixture(scope="module")
@@ -133,6 +133,44 @@ def test_participatory_budget_by_sector_and_status(tools):
     unknown = run(tools, "get_participatory_budget", status="Cancelada")
     assert "valid_statuses" in unknown.data
     assert unknown.evidence == []
+
+
+def test_proposal_detail_by_code_has_history_and_crp(tools):
+    outcome = run(tools, "get_participatory_budget", proposal="102")
+
+    assert outcome.error is None
+    [detail] = outcome.data["matches"]
+    assert (detail["code"], detail["name"], detail["status"]) == (
+        "102", "Escuela de teatro", "En ejecución")
+    assert [h["cutoff"] for h in detail["history"]] == ["2026-03-31", "2026-10-01"]
+    [crp] = detail["commitments"]
+    assert crp["crp"] == "900"
+    assert crp["value_for_this_meta"] == 1000.0  # both repeated CRP-meta lines
+    assert crp["proposals_in_this_crp"] == 2
+    assert [e.source_id for e in outcome.evidence] == ["PP", "CRP"]
+    assert "tipo_acuerdo" not in json.dumps(outcome.data)  # may hold a person's name
+
+
+@pytest.mark.parametrize("query", ["Escuela de teatro", "escuela TEATRO", "teatro"])
+def test_proposal_detail_by_name_ignores_case_accents_and_filler_words(tools, query):
+    outcome = run(tools, "get_participatory_budget", proposal=query)
+
+    assert [d["code"] for d in outcome.data["matches"]] == ["102"]
+
+
+def test_proposal_name_search_returns_every_match(tools):
+    outcome = run(tools, "get_participatory_budget", proposal="barrial")
+
+    assert outcome.data["found"] == 2
+    assert {d["name"] for d in outcome.data["matches"]} == {"Mural barrial", "Reciclaje barrial"}
+
+
+def test_unknown_proposal_is_reported_without_evidence(tools):
+    outcome = run(tools, "get_participatory_budget", proposal="Internet a mi barrio")
+
+    assert outcome.data["found"] == 0
+    assert "Internet a mi barrio" in outcome.data["message"]
+    assert outcome.evidence == []
 
 
 def test_participatory_budget_2026_uses_the_portal_supplement(tools):
@@ -369,11 +407,133 @@ def test_investment_by_ods(tools):
     assert [g["codigo_meta_ods"] for g in detail.data["groups"]] == ["8.3"]
 
 
+# --- Contracts (SECOP II) ----------------------------------------------------------------------
+def test_contracts_are_deduplicated_before_adding_values(tools):
+    outcome = run(tools, "get_contracts")
+
+    data = outcome.data
+    assert data["contracts"] == 5
+    assert data["total_value"] == 3800.0  # summing the 8 link rows would give 7800
+    assert data["zero_value_contracts"] == 1
+    verification = data["verification"]
+    assert verification["level"] == "proyecto"
+    assert (verification["verified_contracts"], verification["pending_contracts"]) == (4, 1)
+    assert verification["pct_verified"] == 80.0
+    assert (verification["verified_value"], verification["pending_value"]) == (3500.0, 300.0)
+    assert data["link_status_by_level"]["meta"] == {"verified": 3, "pending": 2}
+    groups = {g["codigo"]: g for g in data["groups"]}
+    assert groups["2251"] == {"codigo": "2251", "nombre": "Cultura viva", "contratos": 2,
+                              "valor_contratado": 3000.0}
+    assert groups["2502"]["contratos"] == 3  # contract 1 counts in both projects
+    assert groups[None]["nombre"].startswith("Sin proyecto verificado")
+    assert any("no se deben sumar" in note for note in data["notes"])
+    assert any("no es lo ejecutado ni lo pagado" in note for note in data["notes"])
+    [evidence] = outcome.evidence
+    assert evidence.source_id == "CTR"
+    assert evidence.portal_url is None
+    assert "$3,800 COP" in evidence.summary
+
+
+def test_contracts_sample_has_link_statuses_and_public_url(tools):
+    outcome = run(tools, "get_contracts", project_code="2251")
+
+    data = outcome.data
+    assert (data["contracts"], data["total_value"]) == (2, 3000.0)
+    assert data["link_status_by_level"]["meta"] == {"verified": 1, "pending": 1}
+    first, second = data["sample_contracts"]  # sorted by value
+    assert first["reference"] == "FDLSC-CPS-004-2026"
+    assert (first["project_link"], first["meta_link"]) == ("Verificado",
+                                                           "Pendiente de verificación")
+    assert first["public_url"] == "https://community.secop.gov.co/contrato/4"
+    assert first["signed"] == "2026-05-20"
+    assert second["metas"] == ["22511", "22512"]
+    assert "project_code=2251" in outcome.evidence[0].locator
+
+
+def test_contracts_by_meta_use_the_meta_link_status(tools):
+    outcome = run(tools, "get_contracts", meta_code="22512", group_by="meta")
+
+    data = outcome.data
+    assert (data["contracts"], data["total_value"]) == (1, 1000.0)
+    assert data["verification"]["level"] == "meta"
+    [group] = data["groups"]
+    assert (group["codigo"], group["nombre"], group["codigo_proyecto"]) == (
+        "22512", "Realizar 10 festivales", "2251")
+
+
+@pytest.mark.parametrize(("args", "contracts", "value"), [
+    ({"year": 2026}, 2, 2500.0),
+    ({"object_keyword": "ÁRBOL"}, 1, 500.0),  # accent and case insensitive
+    ({"status": "cedido"}, 1, 500.0),
+    ({"status": "Cedido"}, 1, 500.0),  # 'cedido' is normalized in the table
+    ({"verified_only": True}, 4, 3500.0),
+    ({"group_by": "estado"}, 5, 3800.0),
+])
+def test_contract_filters(tools, args, contracts, value):
+    outcome = run(tools, "get_contracts", **args)
+
+    assert outcome.error is None
+    assert (outcome.data["contracts"], outcome.data["total_value"]) == (contracts, value)
+
+
+def test_contracts_by_status_and_year_partition_the_value(tools):
+    by_status = run(tools, "get_contracts", group_by="estado").data["groups"]
+    assert {g["nombre"] for g in by_status} == {"En ejecución", "Cedido", "Cerrado", "Modificado",
+                                                "Aprobado"}
+    assert sum(g["valor_contratado"] for g in by_status) == 3800.0
+    by_year = run(tools, "get_contracts", group_by="vigencia").data["groups"]
+    assert [(g["nombre"], g["contratos"]) for g in by_year] == [("2025", 3), ("2026", 2)]
+
+
+def test_unknown_contract_codes_and_values_say_so(tools):
+    project = run(tools, "get_contracts", project_code="9999")
+    assert project.data["found"] == 0
+    assert "proyecto con el código 9999" in project.data["message"]
+    assert project.evidence == []
+
+    meta = run(tools, "get_contracts", meta_code="99999")
+    assert "meta con el código 99999" in meta.data["message"]
+
+    # Known project without verified links for the filter: pending links are mentioned.
+    pending = run(tools, "get_contracts", project_code="2502", object_keyword="malla")
+    assert pending.data["found"] == 0
+    assert pending.data["contracts_with_pending_project_link"] == 1
+    assert "pendiente de verificación" in pending.data["message"]
+    none_pending = run(tools, "get_contracts", meta_code="25022", year=2026)
+    assert none_pending.data["contracts_with_pending_project_link"] == 0
+    assert "pendiente" not in none_pending.data["message"]
+
+    year = run(tools, "get_contracts", year=2030)
+    assert year.data["available_years"] == [2025, 2026]
+    status = run(tools, "get_contracts", status="Anulado")
+    assert "Cedido" in status.data["valid_statuses"]
+
+
+@pytest.mark.parametrize("args", [
+    {"project_code": "22; DROP"}, {"meta_code": "abc"}, {"group_by": "contratista"},
+    {"object_keyword": "ab"}, {"contratista": "x"},
+])
+def test_contract_parameter_validation(tools, args):
+    assert run(tools, "get_contracts", **args).error is not None
+
+
+def test_contractor_names_never_leave_the_tool_nor_reach_the_database(tools):
+    for group in ("proyecto", "meta", "estado", "vigencia"):
+        outcome = run(tools, "get_contracts", group_by=group)
+        payload = json.dumps(outcome.to_model_payload(), ensure_ascii=False)
+        assert CONTRACTOR_NAME not in payload
+        assert "contratista" not in payload.lower().replace("contratistas", "")
+    for table in ("contrato", "contrato_vinculo"):
+        frame = tools._analytics.read_table(table)
+        assert not any("contratista" in column.lower() for column in frame.columns)
+        assert CONTRACTOR_NAME not in frame.astype(str).to_csv()
+
+
 # --- sources, gaps, privacy ------------------------------------------------------------------
 def test_list_sources_and_gap_tool(tools):
     sources = run(tools, "list_sources")
     ids = [s["source_id"] for s in sources.data["sources"]]
-    assert ids == ["CRP", "F1", "F3-commitments", "ODS", "PMR", "POAI", "PP", "PQRS"]
+    assert ids == ["CRP", "CTR", "F1", "F3-commitments", "ODS", "PMR", "POAI", "PP", "PQRS"]
     poai = next(s for s in sources.data["sources"] if s["source_id"] == "POAI")
     assert poai["on_open_data_portal"] is False
     assert poai["unit"] == "COP (pesos colombianos)"
@@ -388,7 +548,7 @@ def test_official_names_never_leave_any_tool(tools):
         "compare_participatory_budget_vs_commitments": {}, "get_plan_vs_execution": {},
         "get_goal_detail": {"meta_code": "22511"}, "compare_poai_vs_pmr": {},
         "get_changes_between_cutoffs": {"domain": "participatory_budget"},
-        "get_investment_by_ods": {},
+        "get_investment_by_ods": {}, "get_contracts": {},
     }
     for group in ("subtema", "tipo_peticion", "vigencia", "medio_recepcion",
                   "observacion_general"):

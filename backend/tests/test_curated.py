@@ -5,7 +5,12 @@ import pytest
 
 from app.config import REPO_ROOT
 from app.ingestion import curated
-from tests.curated_fixture import OFFICIAL_NAME, portal_commitments_frame, write_mini_package
+from tests.curated_fixture import (
+    CONTRACTOR_NAME,
+    OFFICIAL_NAME,
+    portal_commitments_frame,
+    write_mini_package,
+)
 
 
 @pytest.fixture
@@ -55,6 +60,32 @@ def test_pqrs_keeps_usuario_actual_in_the_table_only(model):
     pqrs = model.tables["pqrs"]
     assert OFFICIAL_NAME in set(pqrs["usuario_actual"])  # loaded, never exposed by tools
     assert pqrs["id_tipo_peticion"].isna().sum() == 1
+
+
+def test_contracts_are_split_into_contracts_and_links_without_contractor(model, package):
+    contracts, links = model.tables["contrato"], model.tables["contrato_vinculo"]
+
+    assert len(contracts) == 5 and len(links) == 8
+    assert contracts["id_contrato"].is_unique
+    assert contracts["valor_contrato"].sum() == 3800.0  # one value per contract
+    assert "Cedido" in set(contracts["estado_contrato"])  # 'cedido' normalized
+    assert str(contracts["fecha_firma"].max()) == "2026-05-20"
+    assert (links["estado_vinculo_meta"] == curated.LINK_PENDING).sum() == 4
+    for frame in (contracts, links):
+        assert not any("contratista" in column.lower() for column in frame.columns)
+        assert CONTRACTOR_NAME not in frame.astype(str).to_csv()
+    # The source file still has the column: it is simply never read.
+    source = package / "Carga_Contratos_SC" / "csv" / curated.CONTRACTS_FILE
+    assert CONTRACTOR_NAME in source.read_text(encoding="utf-8-sig")
+
+
+def test_contract_link_to_an_unknown_meta_fails(package):
+    path = package / "Carga_Contratos_SC" / "csv" / curated.CONTRACTS_FILE
+    path.write_text(path.read_text(encoding="utf-8-sig").replace(",25021,", ",25029,"),
+                    encoding="utf-8-sig")
+
+    with pytest.raises(curated.CuratedDataError, match="contratos → meta"):
+        curated.load_curated_package(package)
 
 
 def test_manifest_mismatch_lists_every_problem(package):
@@ -156,3 +187,6 @@ def test_real_package_matches_its_manifests():
     assert poai.loc[poai["vigencia"] == 2025, "valor_poai"].sum() == 130_871_828_000
     assert poai.loc[poai["vigencia"] == 2026, "valor_poai"].sum() == 127_690_480_000
     assert curated.poai_pmr_differences(t, 2026) == {"budget": 0, "magnitude": 6}
+    assert len(t["contrato"]) == 1936
+    assert len(t["contrato_vinculo"]) == 3853
+    assert t["contrato"]["valor_contrato"].sum() == 204_352_632_384
