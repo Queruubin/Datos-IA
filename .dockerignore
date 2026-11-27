@@ -1,0 +1,15 @@
+.git
+.claude
+**/.env
+**/.env.*
+**/node_modules
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+backend/.venv
+backend/data
+backend/*.egg-info
+frontend/dist
+notebooks
+*.zip
+Experiencia_IA_Guiada_*.html

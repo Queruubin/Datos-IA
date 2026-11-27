@@ -54,3 +54,23 @@ def test_curated_sources_have_no_portal_url_but_an_origin_note():
 
     assert source["portal_url"] is None
     assert source["origin_note"] == "Archivo POAI entregado por la Alcaldía Local"
+
+
+def test_built_frontend_is_served_at_root_without_shadowing_the_api(tmp_path):
+    from app.config import Settings
+
+    (tmp_path / "index.html").write_text("<title>Verificador</title>", encoding="utf-8")
+    settings = Settings(_env_file=None, frontend_dist_dir=tmp_path,
+                        usage_log_path=tmp_path / "usage.duckdb",
+                        gap_log_path=tmp_path / "gap.duckdb")
+    client = TestClient(create_app(store=InMemoryStore(), settings=settings))
+
+    assert "Verificador" in client.get("/").text
+    assert client.get("/health").json() == {"status": "ok"}
+    assert client.get("/api/sources").json() == []
+
+
+def test_frontend_is_not_mounted_when_no_build_is_configured():
+    client = TestClient(create_app(store=InMemoryStore()))
+
+    assert client.get("/").status_code == 404

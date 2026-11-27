@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     usd_to_cop_fallback: float | None = None
     chat_rate_limit_per_minute: int = 20
     cors_origins: list[str] = ["http://localhost:5173"]
+    # Built frontend (vite build). When set, the API also serves the web app at "/" so the
+    # whole product runs as one service (the Docker image for the demo deployment sets it).
+    frontend_dist_dir: Path | None = None
 
     @property
     def raw_cache_dir(self) -> Path:

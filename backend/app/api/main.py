@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.adapters.duckdb import DuckDBStore
@@ -208,6 +209,13 @@ def create_app(
         the real charge is 0."""
         return build_usage_report(
             usage_log.list_records(), datetime.now(UTC), rates.usd_to_cop()
+        )
+
+    # Mounted last so every /api route above wins. The app uses hash routing (#/fuentes),
+    # so serving index.html for "/" is enough; no SPA fallback is needed.
+    if settings.frontend_dist_dir and settings.frontend_dist_dir.is_dir():
+        app.mount(
+            "/", StaticFiles(directory=settings.frontend_dist_dir, html=True), name="frontend"
         )
 
     return app
